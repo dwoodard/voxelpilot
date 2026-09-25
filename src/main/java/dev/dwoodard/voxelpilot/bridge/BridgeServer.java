@@ -7,10 +7,12 @@ import com.sun.net.httpserver.HttpServer;
 import dev.dwoodard.voxelpilot.VoxelPilot;
 import dev.dwoodard.voxelpilot.ai.ProviderFactory;
 import dev.dwoodard.voxelpilot.ai.BuildPlan;
+import dev.dwoodard.voxelpilot.ai.ChatMessage;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.CompletableFuture;
 
@@ -45,9 +47,9 @@ public final class BridgeServer {
 
     public synchronized boolean isRunning() { return server != null; }
 
-    public CompletableFuture<BuildPlan> plan(String systemPrompt, String userPrompt) {
+    public CompletableFuture<BuildPlan> plan(List<ChatMessage> messages) {
         ensureRunning();
-        return ProviderFactory.current().plan(systemPrompt, userPrompt);
+        return ProviderFactory.current().plan(messages);
     }
 
     private void health(HttpExchange exchange) throws IOException {

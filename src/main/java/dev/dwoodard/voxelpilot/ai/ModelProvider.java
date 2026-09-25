@@ -7,5 +7,5 @@ public interface ModelProvider {
     String id();
     CompletableFuture<Boolean> healthCheck();
     CompletableFuture<List<String>> listModels();
-    CompletableFuture<BuildPlan> plan(String systemPrompt, String userPrompt);
+    CompletableFuture<BuildPlan> plan(List<ChatMessage> messages);
 }

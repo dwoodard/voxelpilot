@@ -1,6 +1,7 @@
 package dev.dwoodard.voxelpilot.ui;
 
 import dev.dwoodard.voxelpilot.ai.CommandProcessor;
+import dev.dwoodard.voxelpilot.ai.PaletteHistory;
 import dev.dwoodard.voxelpilot.build.BuildExecutor;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
@@ -16,10 +17,16 @@ import java.util.List;
 import java.util.Locale;
 
 public final class CommandPaletteScreen extends Screen {
+    private static final int MAX_TRANSCRIPT_LINES = 6;
+
     private EditBox input;
     private String status = "Type what you want VoxelPilot to do";
     private List<String> suggestions = List.of();
     private int selected;
+    // Shell-style Up/Down command recall over past submitted inputs (PaletteHistory's
+    // "you" entries). -1 means "not currently browsing history".
+    private int historyIndex = -1;
+    private String draftBeforeHistory = "";
 
     public CommandPaletteScreen() { super(Component.literal("VoxelPilot")); }
 
@@ -64,6 +71,7 @@ public final class CommandPaletteScreen extends Screen {
         items.add("speed normal");
         items.add("speed fast");
         items.add("speed instant");
+        items.add("settings");
 
         String needle = query.toLowerCase(Locale.ROOT).trim();
         suggestions = items.stream().filter(s -> needle.isEmpty() || s.toLowerCase(Locale.ROOT).contains(needle)).distinct().limit(6).toList();
@@ -71,12 +79,25 @@ public final class CommandPaletteScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (keyCode == GLFW.GLFW_KEY_DOWN && !suggestions.isEmpty()) {
-            selected = Math.min(selected + 1, suggestions.size() - 1);
-            return true;
-        }
-        if (keyCode == GLFW.GLFW_KEY_UP && !suggestions.isEmpty()) {
-            selected = Math.max(0, selected - 1);
+        if (keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN) {
+            List<String> pastCommands = PaletteHistory.get().entries().stream()
+                .filter(e -> "you".equals(e.who())).map(PaletteHistory.Entry::text).toList();
+            if (!pastCommands.isEmpty()) {
+                if (keyCode == GLFW.GLFW_KEY_UP) {
+                    if (historyIndex == -1) draftBeforeHistory = input.getValue();
+                    historyIndex = historyIndex == -1 ? pastCommands.size() - 1 : Math.max(0, historyIndex - 1);
+                    input.setValue(pastCommands.get(historyIndex));
+                } else if (historyIndex != -1) {
+                    if (historyIndex < pastCommands.size() - 1) {
+                        historyIndex++;
+                        input.setValue(pastCommands.get(historyIndex));
+                    } else {
+                        historyIndex = -1;
+                        input.setValue(draftBeforeHistory);
+                    }
+                }
+                input.setCursorPosition(input.getValue().length());
+            }
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_TAB && !suggestions.isEmpty()) {
@@ -90,6 +111,7 @@ public final class CommandPaletteScreen extends Screen {
             if (!command.isEmpty()) {
                 String finalCommand = command;
                 status = "Working…";
+                historyIndex = -1;
                 CommandProcessor.run(Minecraft.getInstance(), finalCommand, value -> status = value);
             }
             return true;
@@ -103,19 +125,46 @@ public final class CommandPaletteScreen extends Screen {
         int w = Math.min(620, width - 40);
         int x = (width - w) / 2;
         int y = Math.max(30, height / 5);
+
+        List<PaletteHistory.Entry> history = PaletteHistory.get().entries();
+        int start = Math.max(0, history.size() - MAX_TRANSCRIPT_LINES);
+        List<PaletteHistory.Entry> transcript = history.subList(start, history.size());
+        boolean showWorking = "Working…".equals(status);
+        boolean showHint = transcript.isEmpty() && !showWorking;
+
+        int linesShown = transcript.size() + (showWorking || showHint ? 1 : 0);
         int rowsHeight = suggestions.size() * 22;
-        graphics.fill(x, y, x + w, y + 66 + rowsHeight + 28, 0xEE15171A);
+        int boxHeight = 66 + linesShown * 12 + 10 + rowsHeight + 20;
+        graphics.fill(x, y, x + w, y + boxHeight, 0xEE15171A);
         graphics.drawString(font, "VOXELPILOT", x + 16, y + 4, 0xFF9AA0A6, false);
 
-        int sy = y + 52;
+        int ty = y + 52;
+        for (PaletteHistory.Entry entry : transcript) {
+            boolean isYou = "you".equals(entry.who());
+            String text = (isYou ? "> " : "") + entry.text();
+            if (text.length() > 95) text = text.substring(0, 92) + "...";
+            graphics.drawString(font, text, x + 16, ty, isYou ? 0xFF9AA0A6 : 0xFFE8EAED, false);
+            ty += 12;
+        }
+        if (showWorking || showHint) {
+            graphics.drawString(font, status, x + 16, ty, 0xFF9AA0A6, false);
+            ty += 12;
+        }
+
+        int sy = ty + 8;
         for (int i = 0; i < suggestions.size(); i++) {
             int bg = i == selected ? 0xFF2B3035 : 0x00151515;
             graphics.fill(x + 10, sy + i * 22, x + w - 10, sy + i * 22 + 20, bg);
             graphics.drawString(font, suggestions.get(i), x + 18, sy + i * 22 + 6, 0xFFE8EAED, false);
         }
-        graphics.drawString(font, status, x + 16, sy + rowsHeight + 8, 0xFF9AA0A6, false);
         super.render(graphics, mouseX, mouseY, partialTick);
     }
 
     @Override public boolean isPauseScreen() { return false; }
+
+    @Override
+    public void onClose() {
+        Minecraft mc = Minecraft.getInstance();
+        mc.setScreen(dev.dwoodard.voxelpilot.client.ClientEvents.inspectorOpen ? new InspectorScreen() : null);
+    }
 }

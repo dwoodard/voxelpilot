@@ -4,27 +4,29 @@ import dev.dwoodard.voxelpilot.VoxelPilot;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Items;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 public final class BuildExecutor {
     private static final BuildExecutor INSTANCE = new BuildExecutor();
-    private final List<GhostPreviewManager.ResolvedChange> queue = new ArrayList<>();
+    private final ArrayDeque<ResolvedChange> queue = new ArrayDeque<>();
     private UndoSnapshot undo;
     private UUID playerId;
     private boolean paused;
+    // User-controlled only; persists across builds so "speed fast" before confirm sticks.
     private BuildSpeed speed = BuildSpeed.NORMAL;
     private int total;
     private int completed;
@@ -32,35 +34,57 @@ public final class BuildExecutor {
     private BuildExecutor() {}
     public static BuildExecutor get() { return INSTANCE; }
 
-    public synchronized Result confirm(Minecraft mc) {
-        if (mc.player == null || !GhostPreviewManager.get().hasPreview()) return Result.fail("No ghost preview to confirm");
+    // Called from the client thread. Everything that reads server state (player, inventory)
+    // runs on the integrated server thread; the preview is cleared back on the client once
+    // the build has actually been queued.
+    public CompletableFuture<Result> confirm(Minecraft mc) {
+        if (mc.player == null) return CompletableFuture.completedFuture(Result.fail("No player"));
+        var plan = GhostPreviewManager.get().plan();
+        if (plan.isEmpty() || plan.get().changes().isEmpty()) return CompletableFuture.completedFuture(Result.fail("No ghost preview to confirm"));
         MinecraftServer server = mc.getSingleplayerServer();
-        if (server == null) return Result.fail("World editing is only available in local single-player worlds");
-        if (!queue.isEmpty()) return Result.fail("A build is already running");
+        if (server == null) return CompletableFuture.completedFuture(Result.fail("World editing is only available in local single-player worlds"));
 
-        List<GhostPreviewManager.ResolvedChange> preview = GhostPreviewManager.get().changes();
-        ServerPlayer resourcePlayer = server.getPlayerList().getPlayer(mc.player.getUUID());
-        if (resourcePlayer == null) return Result.fail("Player unavailable");
-        if (!resourcePlayer.getAbilities().instabuild) {
-            var required = MaterialAnalyzer.required(preview);
-            String missing = required.entrySet().stream()
-                .filter(e -> MaterialAnalyzer.countInventory(resourcePlayer, e.getKey()) < e.getValue())
-                .map(e -> e.getKey() + " " + MaterialAnalyzer.countInventory(resourcePlayer, e.getKey()) + "/" + e.getValue())
-                .limit(4)
-                .reduce((a, b) -> a + ", " + b)
-                .orElse("");
-            if (!missing.isBlank()) return Result.fail("Missing materials: " + missing);
+        ResolvedPlan approved = plan.get();
+        int revision = GhostPreviewManager.get().revision();
+        UUID player = mc.player.getUUID();
+        return server.submit(() -> start(server, player, approved)).thenApplyAsync(result -> {
+            // Only clear the preview we actually queued; a revision that landed meanwhile stays.
+            if (result.ok() && GhostPreviewManager.get().revision() == revision) GhostPreviewManager.get().clear();
+            return result;
+        }, mc);
+    }
+
+    private synchronized Result start(MinecraftServer server, UUID id, ResolvedPlan approved) {
+        if (!queue.isEmpty()) return Result.fail("A build is already running");
+        ServerPlayer player = server.getPlayerList().getPlayer(id);
+        if (player == null) return Result.fail("Player unavailable");
+
+        if (!player.getAbilities().instabuild) {
+            Map<Item, Integer> required = MaterialAnalyzer.required(approved.changes());
+            if (required.containsKey(Items.AIR)) return Result.fail("Plan contains blocks that have no item and can't be placed in survival");
+            List<String> missing = new ArrayList<>();
+            required.forEach((item, need) -> {
+                int have = MaterialAnalyzer.countInventory(player, item);
+                if (have < need) missing.add(BuiltInRegistries.ITEM.getKey(item).getPath() + " " + have + "/" + need);
+            });
+            if (!missing.isEmpty()) {
+                return Result.fail("Missing materials: " + String.join(", ", missing.subList(0, Math.min(4, missing.size())))
+                    + (missing.size() > 4 ? " +" + (missing.size() - 4) + " more" : ""));
+            }
         }
 
-        queue.addAll(preview);
-        queue.sort(Comparator.comparingInt(c -> "minecraft:air".equals(c.blockId()) ? -c.pos().getY() : c.pos().getY()));
+        // Removals first, top-down (never undercut the player's footing mid-carve), then
+        // placements bottom-up so supports exist before what rests on them and a door's
+        // lower half lands before its upper half.
+        List<ResolvedChange> ordered = new ArrayList<>(approved.changes());
+        ordered.sort(Comparator.<ResolvedChange>comparingInt(c -> c.removal() ? 0 : 1)
+            .thenComparingInt(c -> c.removal() ? -c.pos().getY() : c.pos().getY()));
+        queue.addAll(ordered);
         total = queue.size();
         completed = 0;
         paused = false;
-        playerId = mc.player.getUUID();
-        speed = GhostPreviewManager.get().plan().map(p -> BuildSpeed.parse(p.speed)).orElse(BuildSpeed.NORMAL);
+        playerId = id;
         undo = new UndoSnapshot();
-        GhostPreviewManager.get().clear();
         return Result.ok("Build started · " + total + " changes · " + speed.name().toLowerCase());
     }
 
@@ -98,33 +122,24 @@ public final class BuildExecutor {
             ServerLevel level = player.serverLevel();
             int batch = Math.min(speed.blocksPerTick, queue.size());
             for (int i = 0; i < batch; i++) {
-                var change = queue.remove(0);
+                ResolvedChange change = queue.peekFirst();
                 undo.capture(level, change.pos());
-                if (!MaterialAnalyzer.consumeOne(player, change.blockId())) {
-                    queue.add(0, change);
+                if (!MaterialAnalyzer.consumeOne(player, change.state())) {
                     paused = true;
-                    player.sendSystemMessage(Component.literal("[VoxelPilot] Paused: missing " + change.blockId()));
+                    player.displayClientMessage(Component.literal("[VoxelPilot] Paused: missing "
+                        + BuiltInRegistries.BLOCK.getKey(change.state().getBlock()).getPath()), true);
                     break;
                 }
-
-                BlockState state = resolve(change.blockId());
-                level.setBlock(change.pos(), state, 3);
+                queue.pollFirst();
+                level.setBlock(change.pos(), change.state(), 3);
                 completed++;
             }
 
             if (queue.isEmpty() && total > 0) {
-                player.sendSystemMessage(Component.literal("[VoxelPilot] Build complete · " + completed + " changes"));
+                player.displayClientMessage(Component.literal("[VoxelPilot] Build complete · " + completed + " changes"), true);
                 VoxelPilot.LOGGER.info("VoxelPilot build complete: {} changes", completed);
             }
         }
-    }
-
-    private BlockState resolve(String idText) {
-        if ("minecraft:air".equals(idText)) return Blocks.AIR.defaultBlockState();
-        ResourceLocation id = ResourceLocation.tryParse(idText);
-        if (id == null || !BuiltInRegistries.BLOCK.containsKey(id)) return Blocks.AIR.defaultBlockState();
-        Block block = BuiltInRegistries.BLOCK.get(id);
-        return block.defaultBlockState();
     }
 
     public record Result(boolean ok, String message) {

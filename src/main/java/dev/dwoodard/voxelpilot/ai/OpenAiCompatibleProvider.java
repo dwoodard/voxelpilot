@@ -14,8 +14,11 @@ import java.util.concurrent.CompletableFuture;
 
 public final class OpenAiCompatibleProvider implements ModelProvider {
     private static final Gson GSON = new Gson();
+    // Shared/static: a per-instance HttpClient can be garbage-collected mid-request
+    // (ProviderFactory builds a fresh provider per call), which tears down the
+    // channel and surfaces as ClosedChannelException. A static client stays reachable.
+    private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build();
     private final ProviderConfig config;
-    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build();
 
     public OpenAiCompatibleProvider(ProviderConfig config) { this.config = config; }
 
@@ -30,7 +33,7 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
     public CompletableFuture<List<String>> listModels() {
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri("/models")).GET().timeout(Duration.ofSeconds(10));
         auth(builder);
-        return http.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
+        return HTTP.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
             ensureSuccess(response);
             JsonArray data = JsonParser.parseString(response.body()).getAsJsonObject().getAsJsonArray("data");
             List<String> models = new ArrayList<>();
@@ -43,40 +46,51 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
     }
 
     @Override
-    public CompletableFuture<BuildPlan> plan(String systemPrompt, String userPrompt) {
+    public CompletableFuture<BuildPlan> plan(List<ChatMessage> messages) {
         JsonObject body = new JsonObject();
         body.addProperty("model", config.model);
         body.addProperty("temperature", 0.2);
-        JsonArray messages = new JsonArray();
-        messages.add(message("system", systemPrompt));
-        messages.add(message("user", userPrompt));
-        body.add("messages", messages);
+        // Without an explicit cap some servers default to a small max_tokens. Component
+        // plans are small, so this is headroom for reasoning models, not for block lists.
+        body.addProperty("max_tokens", 8000);
+        JsonArray messagesJson = new JsonArray();
+        for (ChatMessage m : messages) messagesJson.add(message(m.role(), m.content()));
+        body.add("messages", messagesJson);
+        // Grammar-constrained structured output (LM Studio / llama.cpp and most hosted
+        // OpenAI-compatible APIs). Also sidesteps "Harmony"-style channel wrappers.
+        JsonObject jsonSchema = new JsonObject();
+        jsonSchema.addProperty("name", "voxelpilot_plan");
+        jsonSchema.add("schema", PlanJson.schema());
+        JsonObject responseFormat = new JsonObject();
+        responseFormat.addProperty("type", "json_schema");
+        responseFormat.add("json_schema", jsonSchema);
+        body.add("response_format", responseFormat);
 
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri("/chat/completions"))
             .header("Content-Type", "application/json")
-            .timeout(Duration.ofSeconds(90))
+            .timeout(Duration.ofSeconds(180))
             .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body)));
         auth(builder);
 
-        return http.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
+        return HTTP.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
             ensureSuccess(response);
             JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
-            String content = root.getAsJsonArray("choices").get(0).getAsJsonObject()
-                .getAsJsonObject("message").get("content").getAsString();
-            return parsePlan(content);
+            JsonObject choice = root.getAsJsonArray("choices").get(0).getAsJsonObject();
+            JsonElement finish = choice.get("finish_reason");
+            if (finish != null && !finish.isJsonNull() && "length".equals(finish.getAsString())) throw PlanJson.truncated();
+            JsonObject message = choice.getAsJsonObject("message");
+            String content = text(message, "content");
+            // With json_schema set, LM Studio returns some reasoning models' (e.g. Qwen 3.5)
+            // constrained output in reasoning_content and leaves content empty.
+            if (content.isBlank()) content = text(message, "reasoning_content");
+            if (content.isBlank()) content = text(message, "reasoning");
+            return PlanJson.parse(content);
         });
     }
 
-    private BuildPlan parsePlan(String content) {
-        String json = content.trim();
-        if (json.startsWith("```")) {
-            int firstNewline = json.indexOf('\n');
-            int lastFence = json.lastIndexOf("```");
-            if (firstNewline >= 0 && lastFence > firstNewline) json = json.substring(firstNewline + 1, lastFence).trim();
-        }
-        BuildPlan plan = GSON.fromJson(json, BuildPlan.class);
-        if (plan == null || plan.changes == null) throw new IllegalArgumentException("Model returned no build plan");
-        return plan;
+    private static String text(JsonObject object, String key) {
+        JsonElement value = object.get(key);
+        return value == null || value.isJsonNull() ? "" : value.getAsString();
     }
 
     private JsonObject message(String role, String content) {

@@ -14,8 +14,11 @@ import java.util.concurrent.CompletableFuture;
 
 public final class OllamaProvider implements ModelProvider {
     private static final Gson GSON = new Gson();
+    // Shared/static: a per-instance HttpClient can be garbage-collected mid-request
+    // (ProviderFactory builds a fresh provider per call), which tears down the
+    // channel and surfaces as ClosedChannelException. A static client stays reachable.
+    private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build();
     private final ProviderConfig config;
-    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build();
 
     public OllamaProvider(ProviderConfig config) { this.config = config; }
     @Override public String id() { return "ollama"; }
@@ -28,7 +31,7 @@ public final class OllamaProvider implements ModelProvider {
     @Override
     public CompletableFuture<List<String>> listModels() {
         HttpRequest request = HttpRequest.newBuilder(uri("/api/tags")).GET().timeout(Duration.ofSeconds(10)).build();
-        return http.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
+        return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
             ensureSuccess(response);
             JsonArray data = JsonParser.parseString(response.body()).getAsJsonObject().getAsJsonArray("models");
             List<String> models = new ArrayList<>();
@@ -41,31 +44,29 @@ public final class OllamaProvider implements ModelProvider {
     }
 
     @Override
-    public CompletableFuture<BuildPlan> plan(String systemPrompt, String userPrompt) {
+    public CompletableFuture<BuildPlan> plan(List<ChatMessage> messages) {
         JsonObject body = new JsonObject();
         body.addProperty("model", config.model);
         body.addProperty("stream", false);
-        JsonArray messages = new JsonArray();
-        messages.add(message("system", systemPrompt));
-        messages.add(message("user", userPrompt));
-        body.add("messages", messages);
+        JsonObject options = new JsonObject();
+        options.addProperty("num_predict", 8000);
+        body.add("options", options);
+        JsonArray messagesJson = new JsonArray();
+        for (ChatMessage m : messages) messagesJson.add(message(m.role(), m.content()));
+        body.add("messages", messagesJson);
+        // Ollama 0.5+ accepts a JSON schema here for constrained decoding.
+        body.add("format", PlanJson.schema());
         HttpRequest request = HttpRequest.newBuilder(uri("/api/chat"))
             .header("Content-Type", "application/json")
-            .timeout(Duration.ofSeconds(90))
+            .timeout(Duration.ofSeconds(180))
             .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body)))
             .build();
-        return http.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
+        return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
             ensureSuccess(response);
             JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
-            String content = root.getAsJsonObject("message").get("content").getAsString().trim();
-            if (content.startsWith("```")) {
-                int firstNewline = content.indexOf('\n');
-                int lastFence = content.lastIndexOf("```");
-                if (firstNewline >= 0 && lastFence > firstNewline) content = content.substring(firstNewline + 1, lastFence).trim();
-            }
-            BuildPlan plan = GSON.fromJson(content, BuildPlan.class);
-            if (plan == null || plan.changes == null) throw new IllegalArgumentException("Model returned no build plan");
-            return plan;
+            JsonElement doneReason = root.get("done_reason");
+            if (doneReason != null && !doneReason.isJsonNull() && "length".equals(doneReason.getAsString())) throw PlanJson.truncated();
+            return PlanJson.parse(root.getAsJsonObject("message").get("content").getAsString());
         });
     }
 

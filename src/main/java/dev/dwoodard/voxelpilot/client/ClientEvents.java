@@ -1,17 +1,17 @@
 package dev.dwoodard.voxelpilot.client;
 
-import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.dwoodard.voxelpilot.bridge.BridgeServer;
+import dev.dwoodard.voxelpilot.build.BuildExecutor;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import dev.dwoodard.voxelpilot.ui.CommandPaletteScreen;
-import dev.dwoodard.voxelpilot.ui.WorkspaceScreen;
+import dev.dwoodard.voxelpilot.ui.InspectorScreen;
+import dev.dwoodard.voxelpilot.ui.SettingsScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.phys.AABB;
@@ -22,6 +22,11 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import org.lwjgl.glfw.GLFW;
 
 public final class ClientEvents {
+    // Whether the Inspector should be showing. Cmd+Shift+K flips this. Opening the
+    // palette (Cmd+K) or Settings (Cmd+,) temporarily occupies the one Minecraft Screen
+    // slot on top of it; their onClose() hands control back to the Inspector if this is true.
+    public static boolean inspectorOpen;
+
     @SubscribeEvent
     public void onKey(InputEvent.Key event) {
         if (event.getAction() != GLFW.GLFW_PRESS && event.getAction() != GLFW.GLFW_REPEAT) return;
@@ -34,10 +39,34 @@ public final class ClientEvents {
 
         if (event.getAction() == GLFW.GLFW_PRESS && command && key == GLFW.GLFW_KEY_K) {
             if (shift) {
-                mc.setScreen(mc.screen instanceof WorkspaceScreen ? null : new WorkspaceScreen());
+                inspectorOpen = !inspectorOpen;
+                if (!(mc.screen instanceof CommandPaletteScreen) && !(mc.screen instanceof SettingsScreen)) {
+                    mc.setScreen(inspectorOpen ? new InspectorScreen() : null);
+                }
+            } else if (mc.screen instanceof CommandPaletteScreen palette) {
+                palette.onClose();
             } else {
                 BridgeServer.get().ensureRunning();
                 mc.setScreen(new CommandPaletteScreen());
+            }
+            return;
+        }
+
+        if (event.getAction() == GLFW.GLFW_PRESS && command && key == GLFW.GLFW_KEY_COMMA) {
+            if (mc.screen instanceof SettingsScreen settings) {
+                settings.onClose();
+            } else {
+                mc.setScreen(new SettingsScreen());
+            }
+            return;
+        }
+
+        if (event.getAction() == GLFW.GLFW_PRESS && command && shift
+            && (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER)) {
+            if (mc.screen == null) {
+                BuildExecutor.get().confirm(mc).thenAcceptAsync(result -> {
+                    if (mc.player != null) mc.player.displayClientMessage(Component.literal("[VoxelPilot] " + result.message()), true);
+                }, mc);
             }
             return;
         }
@@ -87,11 +116,13 @@ public final class ClientEvents {
         PoseStack pose = event.getPoseStack();
         Vec3 camera = event.getCamera().getPosition();
         MultiBufferSource.BufferSource buffers = mc.renderBuffers().bufferSource();
-        VertexConsumer lines = buffers.getBuffer(RenderType.lines());
+        // Custom no-depth-test line type: calling RenderSystem.disableDepthTest() around
+        // RenderType.lines() doesn't work, because that type re-enables depth testing when
+        // its batch flushes, so terrain hid the selection.
+        VertexConsumer lines = buffers.getBuffer(XrayRenderType.LINES);
 
         pose.pushPose();
         pose.translate(-camera.x, -camera.y, -camera.z);
-        RenderSystem.disableDepthTest();
 
         SelectionManager.get().box().ifPresent(box ->
             LevelRenderer.renderLineBox(pose, lines, box.aabb(), 0.95F, 0.75F, 0.15F, 1.0F));
@@ -100,14 +131,13 @@ public final class ClientEvents {
         int stride = changes.size() > 5000 ? Math.max(1, changes.size() / 5000) : 1;
         for (int i = 0; i < changes.size(); i += stride) {
             var change = changes.get(i);
-            boolean removal = "minecraft:air".equals(change.blockId());
+            boolean removal = change.removal();
             AABB box = new AABB(change.pos()).inflate(0.01);
             if (removal) LevelRenderer.renderLineBox(pose, lines, box, 0.95F, 0.25F, 0.25F, 0.72F);
             else LevelRenderer.renderLineBox(pose, lines, box, 0.25F, 0.80F, 0.95F, 0.72F);
         }
 
-        buffers.endBatch(RenderType.lines());
-        RenderSystem.enableDepthTest();
+        buffers.endBatch(XrayRenderType.LINES);
         pose.popPose();
     }
 }

@@ -1,38 +1,36 @@
 package dev.dwoodard.voxelpilot.build;
 
-import dev.dwoodard.voxelpilot.ai.BlockChange;
-import dev.dwoodard.voxelpilot.ai.BuildPlan;
-import dev.dwoodard.voxelpilot.selection.SelectionManager;
-import net.minecraft.core.BlockPos;
+import dev.dwoodard.voxelpilot.ai.AiConversation;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
+// Holds the one current preview. Each new plan in the same operation bumps the revision;
+// the frame is kept across revisions so the preview never rotates or shifts under the user.
 public final class GhostPreviewManager {
     private static final GhostPreviewManager INSTANCE = new GhostPreviewManager();
-    private BuildPlan plan;
-    private List<ResolvedChange> resolved = List.of();
+    private ResolvedPlan plan;
+    private int revision;
 
     private GhostPreviewManager() {}
     public static GhostPreviewManager get() { return INSTANCE; }
 
-    public synchronized void setPlan(BuildPlan plan) {
-        BlockPos origin = SelectionManager.get().box().map(b -> b.min())
-            .orElseGet(() -> SelectionManager.get().anchor().orElse(BlockPos.ZERO));
-        List<ResolvedChange> changes = new ArrayList<>();
-        for (BlockChange c : plan.changes) {
-            changes.add(new ResolvedChange(origin.offset(c.x, c.y, c.z), c.block));
-        }
+    public synchronized void setPlan(ResolvedPlan plan) {
         this.plan = plan;
-        this.resolved = Collections.unmodifiableList(changes);
+        revision++;
     }
 
-    public synchronized void clear() { plan = null; resolved = List.of(); }
-    public synchronized Optional<BuildPlan> plan() { return Optional.ofNullable(plan); }
-    public synchronized List<ResolvedChange> changes() { return resolved; }
-    public synchronized boolean hasPreview() { return plan != null && !resolved.isEmpty(); }
+    // Clearing the preview is the "operation" boundary (confirm, cancel, or "clear
+    // selection" all route here) - so this is where AI conversation history resets too.
+    public synchronized void clear() {
+        plan = null;
+        revision = 0;
+        AiConversation.get().reset();
+    }
 
-    public record ResolvedChange(BlockPos pos, String blockId) {}
+    public synchronized Optional<ResolvedPlan> plan() { return Optional.ofNullable(plan); }
+    public synchronized Optional<Frame> frame() { return plan().map(ResolvedPlan::frame); }
+    public synchronized List<ResolvedChange> changes() { return plan == null ? List.of() : plan.changes(); }
+    public synchronized boolean hasPreview() { return plan != null && !plan.changes().isEmpty(); }
+    public synchronized int revision() { return revision; }
 }

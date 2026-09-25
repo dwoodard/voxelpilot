@@ -22,15 +22,23 @@ public final class SelectionManager {
 
     public static SelectionManager get() { return INSTANCE; }
 
+    // Extended-reach crosshair raycast, shared by J-selection and by the no-selection
+    // AI planning fallback so "build X here" has somewhere to anchor to even without J.
+    public Optional<BlockPos> crosshairTarget(Minecraft mc) {
+        if (mc.player == null || mc.level == null) return Optional.empty();
+        HitResult hit = mc.player.pick(PICK_DISTANCE, 0.0F, false);
+        return hit instanceof BlockHitResult blockHit ? Optional.of(blockHit.getBlockPos().immutable()) : Optional.empty();
+    }
+
     public void selectCrosshair(Minecraft mc) {
         if (mc.player == null || mc.level == null) return;
-        HitResult hit = mc.player.pick(PICK_DISTANCE, 0.0F, false);
-        if (!(hit instanceof BlockHitResult blockHit)) {
+        Optional<BlockPos> target = crosshairTarget(mc);
+        if (target.isEmpty()) {
             message(mc, "No block under crosshair within 100 blocks");
             return;
         }
 
-        BlockPos pos = blockHit.getBlockPos();
+        BlockPos pos = target.get();
         if (anchor == null) {
             anchor = pos.immutable();
             min = anchor;

@@ -6,11 +6,11 @@ import dev.dwoodard.voxelpilot.build.BuildSpeed;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
 import dev.dwoodard.voxelpilot.build.MoveService;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
+import dev.dwoodard.voxelpilot.ui.SettingsScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 
 import java.util.Locale;
-import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 public final class CommandProcessor {
@@ -21,46 +21,65 @@ public final class CommandProcessor {
         String lower = input.toLowerCase(Locale.ROOT);
         if (input.isBlank()) return;
 
+        PaletteHistory.get().addUser(input);
+        Consumer<String> reply = value -> { PaletteHistory.get().addAssistant(value); status.accept(value); };
+
         switch (lower) {
             case "confirm", "confirm preview" -> {
-                var result = BuildExecutor.get().confirm(mc);
-                status.accept(result.message());
+                BuildExecutor.get().confirm(mc).whenComplete((result, error) -> mc.execute(() ->
+                    reply.accept(error != null ? "Confirm failed: " + rootMessage(error) : result.message())));
                 return;
             }
             case "cancel", "cancel preview" -> {
                 if (BuildExecutor.get().active()) BuildExecutor.get().cancel();
                 GhostPreviewManager.get().clear();
-                status.accept("Cancelled");
+                reply.accept("Cancelled");
                 return;
             }
-            case "pause" -> { BuildExecutor.get().pause(); status.accept("Build paused"); return; }
-            case "resume", "continue" -> { BuildExecutor.get().resume(); status.accept("Build resumed"); return; }
-            case "undo" -> { status.accept(BuildExecutor.get().undo(mc).message()); return; }
-            case "clear selection" -> { SelectionManager.get().clear(mc); status.accept("Selection cleared"); return; }
+            case "pause" -> { BuildExecutor.get().pause(); reply.accept("Build paused"); return; }
+            case "resume", "continue" -> { BuildExecutor.get().resume(); reply.accept("Build resumed"); return; }
+            case "undo" -> { reply.accept(BuildExecutor.get().undo(mc).message()); return; }
+            case "clear selection" -> { SelectionManager.get().clear(mc); reply.accept("Selection cleared"); return; }
+            case "settings", "models", "configure" -> { mc.setScreen(new SettingsScreen()); return; }
         }
 
         if (lower.startsWith("speed ")) {
             BuildSpeed speed = BuildSpeed.parse(lower.substring(6));
             BuildExecutor.get().setSpeed(speed);
-            status.accept("Build speed: " + speed.name().toLowerCase());
+            reply.accept("Build speed: " + speed.name().toLowerCase());
             return;
         }
 
         BridgeServer.get().ensureRunning();
         status.accept("Planning…");
-        CompletableFuture<BuildPlan> future = AiPlanner.plan(mc, input);
-        future.whenComplete((plan, error) -> mc.execute(() -> {
+        AiPlanner.plan(mc, input).whenComplete((outcome, error) -> mc.execute(() -> {
             if (error != null) {
-                status.accept("AI error: " + rootMessage(error));
+                reply.accept("AI error: " + rootMessage(error));
                 return;
             }
-            if (plan.changes.isEmpty() && plan.suggestedMove != null && lower.startsWith("move me")) {
-                var move = MoveService.move(mc, plan.suggestedMove.x, plan.suggestedMove.y, plan.suggestedMove.z);
-                status.accept(move.message());
+            BuildPlan plan = outcome.plan();
+            if (outcome.resolved() == null) {
+                // Nothing to preview - either a move request, or the model correctly
+                // recognized this wasn't a build request and replied conversationally.
+                if (plan.suggestedMove != null && lower.startsWith("move me")) {
+                    var target = outcome.frame().toWorld((int) Math.floor(plan.suggestedMove.x),
+                        (int) Math.floor(plan.suggestedMove.y), (int) Math.floor(plan.suggestedMove.z));
+                    var move = MoveService.move(mc, target.getX() + 0.5, target.getY(), target.getZ() + 0.5);
+                    reply.accept(move.message());
+                } else {
+                    reply.accept(plan.message == null || plan.message.isBlank() ? "No changes needed" : plan.message);
+                }
                 return;
             }
-            GhostPreviewManager.get().setPlan(plan);
-            status.accept("Preview ready · " + plan.changes.size() + " changes · " + plan.mode);
+            var resolved = outcome.resolved();
+            if (resolved.changes().isEmpty()) {
+                reply.accept("Nothing to change - the world already matches that plan");
+                return;
+            }
+            GhostPreviewManager.get().setPlan(resolved);
+            String notes = resolved.notes().isEmpty() ? "" : " · " + String.join(" · ", resolved.notes());
+            reply.accept((plan.message == null || plan.message.isBlank() ? plan.title : plan.message)
+                + " · rev " + GhostPreviewManager.get().revision() + " · " + resolved.changes().size() + " changes" + notes);
             if (mc.player != null) mc.player.displayClientMessage(Component.literal("[VoxelPilot] Ghost preview ready · Cmd+Shift+K for details"), true);
         }));
     }
