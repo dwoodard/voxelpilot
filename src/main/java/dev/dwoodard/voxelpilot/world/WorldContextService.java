@@ -6,13 +6,18 @@ import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import dev.dwoodard.voxelpilot.build.Frame;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.Property;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 // A compact, token-budgeted summary of the world in the plan's local frame. Models can't
 // reason over thousands of raw block samples, but they can read a small heightmap
@@ -22,6 +27,13 @@ public final class WorldContextService {
     private static final int MAX_GRID = 16;        // surface grid is at most 16x16 cells
     private static final int MAX_LAYERS = 16;
     private static final int AROUND = 8;           // no-selection: +-8 blocks around the target
+    private static final int NEAR = 4;             // no-selection: existing blocks within +-4 of the target
+    private static final int MAX_NOTABLE = 40;
+    private static final int MAX_NOTABLE_SCAN = 40_000;
+    private static final Set<String> PUSHERS = Set.of("hopper", "dropper", "dispenser", "piston", "sticky_piston");
+    private static final Set<String> FUNCTIONAL_PROPERTIES = Set.of(
+        "facing", "powered", "open", "type", "shape", "hinge", "attached", "extended", "enabled",
+        "power", "lit", "mode", "delay", "locked", "north", "east", "south", "west", "face", "rotation");
 
     private WorldContextService() {}
 
@@ -31,7 +43,12 @@ public final class WorldContextService {
 
         root.addProperty("gameMode", mc.player.getAbilities().instabuild ? "creative" : "survival");
         if (frame.hasSelection()) {
-            root.add("selection", ints(frame.width(), frame.height(), frame.depth()));
+            // Named axes: a bare [w,h,d] gets its order mixed up (a 1x1x32 floor built 32 tall).
+            JsonObject selection = new JsonObject();
+            selection.addProperty("width_x", frame.width());
+            selection.addProperty("height_y", frame.height());
+            selection.addProperty("depth_z", frame.depth());
+            root.add("selection", selection);
             root.add("surface", surface(mc, frame, 0, 0, frame.width(), frame.depth(), frame.height() - 1, 0));
             root.add("layers", layers(mc, frame));
         } else {
@@ -50,8 +67,83 @@ public final class WorldContextService {
             root.add("player", ints(p[0], p[1], p[2]));
         }
 
+        JsonArray existing = frame.hasSelection()
+            ? notable(mc, frame, 0, 0, 0, frame.width(), frame.height(), frame.depth())
+            : notable(mc, frame, -NEAR, -NEAR, -NEAR, NEAR * 2 + 1, NEAR * 2 + 1, NEAR * 2 + 1);
+        if (!existing.isEmpty()) root.add("existing", existing);
+
         if (!mc.player.getAbilities().instabuild) root.add("inventory", inventory(mc));
         return GSON.toJson(root);
+    }
+
+    // Functional and oriented blocks already there (hoppers, chests, redstone, doors, stairs),
+    // with states in local directions, so "fix the hopper" or "extend these stairs" can act
+    // on the real positions. Plain terrain, logs, leaves, and plants are left out.
+    private static JsonArray notable(Minecraft mc, Frame frame, int x0, int y0, int z0, int w, int h, int d) {
+        JsonArray out = new JsonArray();
+        if ((long) w * h * d > MAX_NOTABLE_SCAN) return out;
+        for (int y = y0; y < y0 + h && out.size() < MAX_NOTABLE; y++) {
+            for (int z = z0; z < z0 + d && out.size() < MAX_NOTABLE; z++) {
+                for (int x = x0; x < x0 + w && out.size() < MAX_NOTABLE; x++) {
+                    BlockPos pos = frame.toWorld(x, y, z);
+                    BlockState state = mc.level.getBlockState(pos);
+                    if (state.isAir() || !(mc.level.getBlockEntity(pos) != null || isFunctional(state))) continue;
+                    JsonObject entry = new JsonObject();
+                    entry.add("at", ints(x, y, z));
+                    entry.addProperty("block", describeLocal(state, frame));
+                    // Say what item movers push into, so "hook the hopper up" is a stated fact,
+                    // not something the model has to derive from facing semantics.
+                    if (PUSHERS.contains(id(state)) && state.hasProperty(BlockStateProperties.FACING_HOPPER)) {
+                        into(entry, mc, frame, pos, state.getValue(BlockStateProperties.FACING_HOPPER));
+                    } else if (PUSHERS.contains(id(state)) && state.hasProperty(BlockStateProperties.FACING)) {
+                        into(entry, mc, frame, pos, state.getValue(BlockStateProperties.FACING));
+                    }
+                    out.add(entry);
+                }
+            }
+        }
+        return out;
+    }
+
+    private static void into(JsonObject entry, Minecraft mc, Frame frame, BlockPos pos, Direction facing) {
+        BlockPos target = pos.relative(facing);
+        int[] t = frame.toLocal(target);
+        entry.addProperty("into", id(mc.level.getBlockState(target)) + " at " + t[0] + " " + t[1] + " " + t[2]);
+    }
+
+    private static boolean isFunctional(BlockState state) {
+        for (Property<?> property : state.getProperties()) {
+            if (FUNCTIONAL_PROPERTIES.contains(property.getName())) return true;
+        }
+        return false;
+    }
+
+    // Same syntax the script uses, with world directions turned into forward/back/left/right.
+    private static String describeLocal(BlockState state, Frame frame) {
+        StringBuilder s = new StringBuilder(id(state));
+        if (state.getProperties().isEmpty()) return s.toString();
+        s.append('[');
+        boolean first = true;
+        for (Property<?> property : state.getProperties()) {
+            if (!first) s.append(',');
+            first = false;
+            Object value = state.getValue(property);
+            String text = value instanceof Direction dir ? localName(dir, frame) : propertyValue(property, state);
+            s.append(property.getName()).append('=').append(text);
+        }
+        return s.append(']').toString();
+    }
+
+    private static <T extends Comparable<T>> String propertyValue(Property<T> property, BlockState state) {
+        return property.getName(state.getValue(property));
+    }
+
+    private static String localName(Direction dir, Frame frame) {
+        if (dir == frame.forward()) return "forward";
+        if (dir == frame.forward().getOpposite()) return "back";
+        if (dir == frame.right()) return "right";
+        if (dir == frame.right().getOpposite()) return "left";
+        return dir.getSerializedName();
     }
 
     // Height of the topmost solid block per column, in local y, scanning down from yTop to

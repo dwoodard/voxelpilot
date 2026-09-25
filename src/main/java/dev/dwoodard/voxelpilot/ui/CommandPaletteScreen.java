@@ -100,6 +100,12 @@ public final class CommandPaletteScreen extends Screen {
             }
             return true;
         }
+        if (keyCode == GLFW.GLFW_KEY_L && (modifiers & (GLFW.GLFW_MOD_SUPER | GLFW.GLFW_MOD_CONTROL)) != 0) {
+            PaletteHistory.get().clear();
+            historyIndex = -1;
+            status = "Type what you want VoxelPilot to do";
+            return true;
+        }
         if (keyCode == GLFW.GLFW_KEY_TAB && !suggestions.isEmpty()) {
             input.setValue(suggestions.get(selected));
             input.setCursorPosition(input.getValue().length());
@@ -112,7 +118,16 @@ public final class CommandPaletteScreen extends Screen {
                 String finalCommand = command;
                 status = "Working…";
                 historyIndex = -1;
-                CommandProcessor.run(Minecraft.getInstance(), finalCommand, value -> status = value);
+                // A bug in command handling must never take the game down with it.
+                try {
+                    CommandProcessor.run(Minecraft.getInstance(), finalCommand, value -> status = value);
+                } catch (RuntimeException | Error e) {
+                    dev.dwoodard.voxelpilot.VoxelPilot.LOGGER.error("VoxelPilot: command failed: {}", finalCommand, e);
+                    Throwable root = e;
+                    while (root.getCause() != null) root = root.getCause();
+                    status = "Error: " + root;
+                    PaletteHistory.get().addAssistant(status);
+                }
             }
             return true;
         }
@@ -162,9 +177,11 @@ public final class CommandPaletteScreen extends Screen {
 
     @Override public boolean isPauseScreen() { return false; }
 
+    // Esc (or Cmd+K again) goes straight back to the game, even if the Inspector was open
+    // underneath; only Cmd+Shift+K brings the Inspector back.
     @Override
     public void onClose() {
-        Minecraft mc = Minecraft.getInstance();
-        mc.setScreen(dev.dwoodard.voxelpilot.client.ClientEvents.inspectorOpen ? new InspectorScreen() : null);
+        dev.dwoodard.voxelpilot.client.ClientEvents.inspectorOpen = false;
+        Minecraft.getInstance().setScreen(null);
     }
 }

@@ -52,6 +52,16 @@ public final class SelectionManager {
         }
     }
 
+    // Programmatic selection (by request, not J): corners inclusive, arrow keys then work
+    // relative to the given facing just as after pressing J.
+    public void set(Minecraft mc, BlockPos a, BlockPos b, Direction facing) {
+        anchor = a.immutable();
+        min = min(a, b);
+        max = max(a, b);
+        facingAtAnchor = facing.getAxis().isHorizontal() ? facing : Direction.NORTH;
+        message(mc, "Selected " + dimensions());
+    }
+
     public void clear(Minecraft mc) {
         anchor = null;
         min = null;

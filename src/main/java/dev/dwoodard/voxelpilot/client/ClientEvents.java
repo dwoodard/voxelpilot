@@ -16,6 +16,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
 import net.minecraftforge.client.event.InputEvent;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -26,6 +27,12 @@ public final class ClientEvents {
     // palette (Cmd+K) or Settings (Cmd+,) temporarily occupies the one Minecraft Screen
     // slot on top of it; their onClose() hands control back to the Inspector if this is true.
     public static boolean inspectorOpen;
+
+    // Agents (MCP, scripts) can connect as soon as a world is open, not only after Cmd+K.
+    @SubscribeEvent
+    public void onLogin(ClientPlayerNetworkEvent.LoggingIn event) {
+        BridgeServer.get().ensureRunning();
+    }
 
     @SubscribeEvent
     public void onKey(InputEvent.Key event) {
@@ -116,6 +123,7 @@ public final class ClientEvents {
         PoseStack pose = event.getPoseStack();
         Vec3 camera = event.getCamera().getPosition();
         MultiBufferSource.BufferSource buffers = mc.renderBuffers().bufferSource();
+        GhostRenderer.render(pose, camera, buffers);
         // Custom no-depth-test line type: calling RenderSystem.disableDepthTest() around
         // RenderType.lines() doesn't work, because that type re-enables depth testing when
         // its batch flushes, so terrain hid the selection.

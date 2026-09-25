@@ -17,6 +17,8 @@ import java.util.Optional;
 // world (read-only). Anything invalid throws PlanException; a plan is either fully valid or
 // rejected, never partially applied.
 public final class PlanResolver {
+    public static final int MAX_WORLD_CHANGES = 100_000;
+
     private PlanResolver() {}
 
     public static ResolvedPlan resolve(Level level, BuildPlan plan, Frame frame, Optional<SelectionBox> selection) {
@@ -38,6 +40,9 @@ public final class PlanResolver {
             if (!existing.isAir()) replaced++;
             if (selection.isPresent() && !contains(selection.get(), pos)) outside++;
             changes.add(new ResolvedChange(pos, target));
+            if (changes.size() > MAX_WORLD_CHANGES) {
+                throw new PlanException(String.format("This would change more than %,d blocks; select a smaller area or do it in parts", MAX_WORLD_CHANGES));
+            }
             minX = Math.min(minX, pos.getX()); minY = Math.min(minY, pos.getY()); minZ = Math.min(minZ, pos.getZ());
             maxX = Math.max(maxX, pos.getX()); maxY = Math.max(maxY, pos.getY()); maxZ = Math.max(maxZ, pos.getZ());
         }

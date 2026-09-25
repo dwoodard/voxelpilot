@@ -23,7 +23,8 @@ public record BlockSpec(String id, Map<String, String> state) {
             if (!s.endsWith("]")) throw new PlanException("Malformed block state in '" + text + "'");
             String body = s.substring(bracket + 1, s.length() - 1).trim();
             if (!body.isEmpty()) {
-                for (String pair : body.split(",")) {
+                // Commas per vanilla syntax; models also write spaces ("enabled=true facing=down").
+                for (String pair : body.split("[,\\s]+")) {
                     String[] kv = pair.split("=", -1);
                     if (kv.length != 2 || kv[0].isBlank() || kv[1].isBlank()) {
                         throw new PlanException("Malformed block state '" + pair.trim() + "' in '" + text + "'");

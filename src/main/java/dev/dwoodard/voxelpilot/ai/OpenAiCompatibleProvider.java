@@ -21,6 +21,7 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
     // (ProviderFactory builds a fresh provider per call), which tears down the
     // channel and surfaces as ClosedChannelException. A static client stays reachable.
     private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(8)).build();
+    private static final long THINKING_LIMIT_MS = 30_000;
     private final ProviderConfig config;
 
     public OpenAiCompatibleProvider(ProviderConfig config) { this.config = config; }
@@ -88,6 +89,7 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
             LineSplitter splitter = new LineSplitter(onLine);
             boolean sawReasoning = false;
             String finish = null;
+            long started = System.currentTimeMillis();
             try (Stream<String> lines = response.body()) {
                 for (String line : (Iterable<String>) lines::iterator) {
                     if (!line.startsWith("data:")) continue;
@@ -100,6 +102,13 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
                     if (delta != null) {
                         splitter.accept(text(delta, "content"));
                         sawReasoning |= !text(delta, "reasoning_content").isEmpty() || !text(delta, "reasoning").isEmpty();
+                    }
+                    // Some local reasoning models (e.g. Qwen 3.5 in LM Studio) can't be told to
+                    // skip thinking and will burn the whole budget on it. Give up early and say why;
+                    // closing the stream also stops the generation server-side.
+                    if (sawReasoning && splitter.text().isBlank() && System.currentTimeMillis() - started > THINKING_LIMIT_MS) {
+                        throw new IllegalStateException("Model spent " + THINKING_LIMIT_MS / 1000
+                            + "s thinking without answering. Pick a faster model in Settings (Cmd+,), e.g. openai/gpt-oss-20b");
                     }
                     String reason = text(choice, "finish_reason");
                     if (!reason.isEmpty()) finish = reason;

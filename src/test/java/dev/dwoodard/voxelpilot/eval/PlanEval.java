@@ -41,7 +41,7 @@ public final class PlanEval {
         int area = w * d;
         String layers = (h - 1 > groundY ? "{\"y\":\"" + (groundY + 1) + "-" + (h - 1) + "\",\"blocks\":{\"air\":" + area + "}}," : "")
             + "{\"y\":\"" + (groundY == 0 ? "0" : "0-" + groundY) + "\",\"blocks\":{\"" + ground + "\":" + area + "}}";
-        return "{\"gameMode\":\"creative\",\"selection\":[" + w + "," + h + "," + d + "],\"surface\":{\"flat\":" + groundY
+        return "{\"gameMode\":\"creative\",\"selection\":{\"width_x\":" + w + ",\"height_y\":" + h + ",\"depth_z\":" + d + "},\"surface\":{\"flat\":" + groundY
             + ",\"blocks\":{\"" + ground + "\":" + area + "}},\"layers\":[" + layers + "],\"player\":{\"at\":[1," + (groundY + 1) + ",-4],\"insideSelection\":false}}";
     }
 

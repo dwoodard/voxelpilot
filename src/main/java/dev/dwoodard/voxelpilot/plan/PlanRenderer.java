@@ -12,7 +12,10 @@ import java.util.Map;
 // window placed after a wall cuts into it.
 public final class PlanRenderer {
     public static final int MAX_NODES = 64;
-    public static final int MAX_CHANGES = 50_000;
+    // Memory guard on raw expansion only. The real limit is on blocks that actually change
+    // (PlanResolver), since clearing a mostly-empty area expands to far more positions than
+    // it modifies.
+    public static final int MAX_CHANGES = 500_000;
 
     public record Result(List<LocalChange> changes, Map<String, Bounds> nodeBounds) {}
 

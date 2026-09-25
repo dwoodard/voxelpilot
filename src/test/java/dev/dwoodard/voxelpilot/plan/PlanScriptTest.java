@@ -79,9 +79,31 @@ class PlanScriptTest {
     }
 
     @Test
+    void blockNameAsCommandMeansSet() {
+        PlanNode chest = PlanScript.parse("chest 0 2 1 chest[facing=right,type=single]").node();
+        assertEquals("blocks", chest.type);
+        assertArrayEquals(new int[]{0, 2, 1}, chest.at);
+        assertEquals("chest[facing=right,type=single]", chest.blocks.get(0).block);
+        assertEquals("hopper", PlanScript.parse("hopper 1 0 0").node().blocks.get(0).block);
+    }
+
+    @Test
+    void stateAcceptsSpacesBetweenProperties() {
+        PlanNode hopper = PlanScript.parse("set 1 0 0 hopper[enabled=true facing=left]").node();
+        var changes = PlanRenderer.render(java.util.List.of(hopper)).changes();
+        assertEquals(java.util.Map.of("enabled", "true", "facing", "left"), changes.get(0).block().state());
+    }
+
+    @Test
+    void parsesSelect() {
+        assertArrayEquals(new int[]{-1, 1, -1, 0, 1, -1}, PlanScript.parse("select -1 1 -1 0 1 -1").select());
+        assertThrows(PlanException.class, () -> PlanScript.parse("select 0 0 0 1 1"));
+    }
+
+    @Test
     void errorsAreSpecific() {
         assertTrue(assertThrows(PlanException.class, () -> PlanScript.parse("box 0 0 0 3 1 stone")).getMessage().contains("number for depth"));
-        assertTrue(assertThrows(PlanException.class, () -> PlanScript.parse("teapot 0 0 0")).getMessage().contains("unknown command"));
+        assertTrue(assertThrows(PlanException.class, () -> PlanScript.parse("teapot please")).getMessage().contains("unknown command"));
         assertTrue(assertThrows(PlanException.class, () -> PlanScript.parse("box 0 0 0 3 1 3 stone glassy")).getMessage().contains("unknown option"));
         assertTrue(assertThrows(PlanException.class, () -> PlanScript.parse("door 0 0 0 back oak_door extra")).getMessage().contains("unexpected"));
     }

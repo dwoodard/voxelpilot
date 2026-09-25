@@ -21,6 +21,12 @@ public final class PaletteHistory {
     public synchronized List<Entry> entries() { return List.copyOf(entries); }
     public synchronized void addUser(String text) { add(new Entry("you", text)); }
     public synchronized void addAssistant(String text) { add(new Entry("voxelpilot", text)); }
+    // Fresh start: the transcript, Up/Down recall, and the AI's memory of earlier requests.
+    // A preview on screen stays; its script is still what "make it taller" revises.
+    public synchronized void clear() {
+        entries.clear();
+        AiConversation.get().reset();
+    }
 
     private void add(Entry entry) {
         entries.add(entry);

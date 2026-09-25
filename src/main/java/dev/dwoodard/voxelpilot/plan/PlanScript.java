@@ -19,11 +19,12 @@ import java.util.Set;
 //   stairs 0 15 0 forward down 10 stone_brick_stairs width 2
 //   say Spruce cabin with a door facing you.
 public final class PlanScript {
-    public static final String COMMANDS = "box, stairs, roof, door, set, circle, sphere, line, pyramid, title, say, move";
+    public static final String COMMANDS = "box, stairs, roof, door, set, circle, sphere, line, pyramid, select, title, say, move";
     private static final Set<String> FILLS = Set.of("solid", "hollow", "walls", "outline");
 
-    // Exactly one of node / title / say / move is set.
-    public record Line(PlanNode node, String title, String say, int[] move) {}
+    // Exactly one of node / title / say / move / select is set. select = two corners
+    // {x1,y1,z1,x2,y2,z2}, inclusive, in local coordinates.
+    public record Line(PlanNode node, String title, String say, int[] move, int[] select) {}
 
     private PlanScript() {}
 
@@ -41,12 +42,23 @@ public final class PlanScript {
         }
         String command = tokens.get(start).toLowerCase(Locale.ROOT);
         switch (command) {
-            case "title" -> { return new Line(null, rest(text, command), null, null); }
-            case "say" -> { return new Line(null, null, rest(text, command), null); }
+            case "title" -> { return new Line(null, rest(text, command), null, null, null); }
+            case "say" -> { return new Line(null, null, rest(text, command), null, null); }
         }
 
         Args args = new Args(tokens, start + 1, command);
-        if (command.equals("move")) return new Line(null, null, null, new int[]{args.integer("x"), args.integer("y"), args.integer("z")});
+        boolean known = Set.of("box", "stairs", "roof", "door", "set", "circle", "sphere", "line", "pyramid", "move", "select").contains(command);
+        if (!known && !(args.hasNext() && args.peekIsInteger())) {
+            throw new PlanException("unknown command '" + command + "' (use " + COMMANDS + ")");
+        }
+        if (command.equals("move")) return new Line(null, null, null, new int[]{args.integer("x"), args.integer("y"), args.integer("z")}, null);
+        if (command.equals("select")) {
+            int[] box = new int[6];
+            String[] names = {"x1", "y1", "z1", "x2", "y2", "z2"};
+            for (int i = 0; i < 6; i++) box[i] = args.integer(names[i]);
+            if (args.hasNext()) throw new PlanException("select: unexpected '" + args.next("") + "'");
+            return new Line(null, null, null, null, box);
+        }
 
         PlanNode node = new PlanNode();
         node.id = id;
@@ -159,10 +171,19 @@ public final class PlanScript {
                     node.fill = "hollow";
                 }
             }
-            default -> throw new PlanException("unknown command '" + command + "' (use " + COMMANDS + ")");
+            default -> {
+                // Models sometimes use a block name as the command: "chest 0 2 1 chest[facing=left]"
+                // or "hopper 1 0 0". The coordinates already parsed, so treat it as set.
+                if (!command.matches("[a-z0-9_:]+")) throw new PlanException("unknown command '" + command + "' (use " + COMMANDS + ")");
+                node.type = "blocks";
+                PlanNode.RawBlock raw1 = new PlanNode.RawBlock();
+                raw1.at = new int[]{0, 0, 0};
+                raw1.block = args.hasNext() ? args.next("block") : tokens.get(start);
+                node.blocks = List.of(raw1);
+            }
         }
         if (args.hasNext()) throw new PlanException(command + ": unexpected '" + args.next("") + "'");
-        return new Line(node, null, null, null);
+        return new Line(node, null, null, null, null);
     }
 
     // Tolerate the usual small-model decorations: fences, bullets, numbering, backticks.
@@ -215,6 +236,7 @@ public final class PlanScript {
 
         boolean hasNext() { return index < tokens.size(); }
         boolean peekIs(String value) { return hasNext() && tokens.get(index).equalsIgnoreCase(value); }
+        boolean peekIsInteger() { return hasNext() && tokens.get(index).matches("-?\\d+"); }
 
         String next(String what) {
             if (!hasNext()) throw new PlanException(command + ": missing " + what);

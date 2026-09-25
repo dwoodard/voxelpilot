@@ -45,12 +45,22 @@ def localProps = new Properties()
 if (file('local.properties').exists()) file('local.properties').withInputStream { localProps.load(it) }
 def modsDir = project.findProperty('modsDir') ?: localProps.getProperty('modsDir')
 
-tasks.register('installMod', Copy) {
+// Written under a temporary name, then atomically renamed over the old jar. Overwriting in
+// place corrupts a running game's view of its jar (lazy class loading then fails with
+// NoClassDefFoundError); after a rename, a running game keeps its original file until restart.
+tasks.register('installMod') {
     dependsOn 'reobfJar'
-    from tasks.named('jar').flatMap { it.archiveFile }
-    into modsDir ?: layout.buildDirectory.dir('no-mods-dir')
     onlyIf { modsDir != null }
-    doLast { println "VoxelPilot installed to ${modsDir}" }
+    def jarFile = tasks.named('jar').flatMap { it.archiveFile }
+    doLast {
+        def source = jarFile.get().asFile.toPath()
+        def dir = java.nio.file.Paths.get(modsDir.toString())
+        def target = dir.resolve(source.fileName.toString())
+        def temp = dir.resolve(source.fileName.toString() + '.installing')
+        java.nio.file.Files.copy(source, temp, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        java.nio.file.Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+        println "VoxelPilot installed to ${modsDir} (restart Minecraft to load it)"
+    }
 }
 if (modsDir != null) tasks.named('build') { finalizedBy 'installMod' }
 
