@@ -11,6 +11,9 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public final class OpenAiCompatibleProvider implements ModelProvider {
     private static final Gson GSON = new Gson();
@@ -34,7 +37,9 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri("/models")).GET().timeout(Duration.ofSeconds(10));
         auth(builder);
         return HTTP.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
-            ensureSuccess(response);
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IllegalStateException("Provider returned HTTP " + response.statusCode() + ": " + response.body());
+            }
             JsonArray data = JsonParser.parseString(response.body()).getAsJsonObject().getAsJsonArray("data");
             List<String> models = new ArrayList<>();
             if (data != null) for (JsonElement element : data) {
@@ -45,59 +50,75 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
         });
     }
 
+    // Server-sent events: each "data:" line carries a content delta. Reasoning deltas are
+    // ignored (they're the model thinking, not the script).
     @Override
-    public CompletableFuture<BuildPlan> plan(List<ChatMessage> messages) {
+    public CompletableFuture<String> stream(List<ChatMessage> messages, Consumer<String> onLine) {
         JsonObject body = new JsonObject();
         body.addProperty("model", config.model);
         body.addProperty("temperature", 0.2);
-        // Without an explicit cap some servers default to a small max_tokens. Component
-        // plans are small, so this is headroom for reasoning models, not for block lists.
-        body.addProperty("max_tokens", 8000);
+        body.addProperty("stream", true);
+        // Scripts are a few hundred tokens; the cap mostly bounds a runaway reasoning model.
+        body.addProperty("max_tokens", 3000);
+        // Thinking time dominates latency on local reasoning models (gpt-oss). Servers that
+        // don't know the field ignore it.
+        body.addProperty("reasoning_effort", "low");
         JsonArray messagesJson = new JsonArray();
-        for (ChatMessage m : messages) messagesJson.add(message(m.role(), m.content()));
+        for (ChatMessage m : messages) {
+            JsonObject object = new JsonObject();
+            object.addProperty("role", m.role());
+            object.addProperty("content", m.content());
+            messagesJson.add(object);
+        }
         body.add("messages", messagesJson);
-        // Grammar-constrained structured output (LM Studio / llama.cpp and most hosted
-        // OpenAI-compatible APIs). Also sidesteps "Harmony"-style channel wrappers.
-        JsonObject jsonSchema = new JsonObject();
-        jsonSchema.addProperty("name", "voxelpilot_plan");
-        jsonSchema.add("schema", PlanJson.schema());
-        JsonObject responseFormat = new JsonObject();
-        responseFormat.addProperty("type", "json_schema");
-        responseFormat.add("json_schema", jsonSchema);
-        body.add("response_format", responseFormat);
 
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri("/chat/completions"))
             .header("Content-Type", "application/json")
-            .timeout(Duration.ofSeconds(180))
+            .header("Accept", "text/event-stream")
+            .timeout(Duration.ofSeconds(120))
             .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body)));
         auth(builder);
 
-        return HTTP.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
-            ensureSuccess(response);
-            JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
-            JsonObject choice = root.getAsJsonArray("choices").get(0).getAsJsonObject();
-            JsonElement finish = choice.get("finish_reason");
-            if (finish != null && !finish.isJsonNull() && "length".equals(finish.getAsString())) throw PlanJson.truncated();
-            JsonObject message = choice.getAsJsonObject("message");
-            String content = text(message, "content");
-            // With json_schema set, LM Studio returns some reasoning models' (e.g. Qwen 3.5)
-            // constrained output in reasoning_content and leaves content empty.
-            if (content.isBlank()) content = text(message, "reasoning_content");
-            if (content.isBlank()) content = text(message, "reasoning");
-            return PlanJson.parse(content);
-        });
+        return HTTP.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofLines()).thenApplyAsync(response -> {
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                String error;
+                try (Stream<String> lines = response.body()) { error = lines.collect(Collectors.joining("\n")); }
+                throw new IllegalStateException("Provider returned HTTP " + response.statusCode() + ": " + error);
+            }
+            LineSplitter splitter = new LineSplitter(onLine);
+            boolean sawReasoning = false;
+            String finish = null;
+            try (Stream<String> lines = response.body()) {
+                for (String line : (Iterable<String>) lines::iterator) {
+                    if (!line.startsWith("data:")) continue;
+                    String data = line.substring(5).trim();
+                    if (data.equals("[DONE]")) break;
+                    JsonArray choices = JsonParser.parseString(data).getAsJsonObject().getAsJsonArray("choices");
+                    if (choices == null || choices.isEmpty()) continue;
+                    JsonObject choice = choices.get(0).getAsJsonObject();
+                    JsonObject delta = choice.getAsJsonObject("delta");
+                    if (delta != null) {
+                        splitter.accept(text(delta, "content"));
+                        sawReasoning |= !text(delta, "reasoning_content").isEmpty() || !text(delta, "reasoning").isEmpty();
+                    }
+                    String reason = text(choice, "finish_reason");
+                    if (!reason.isEmpty()) finish = reason;
+                }
+            }
+            splitter.flush();
+            if ("length".equals(finish)) throw PlanJson.truncated();
+            if (splitter.text().isBlank()) {
+                throw new IllegalStateException(sawReasoning
+                    ? "Model only produced reasoning and no answer; try a non-thinking model"
+                    : "Model returned an empty answer");
+            }
+            return splitter.text();
+        }, ModelProvider.STREAM_EXECUTOR);
     }
 
     private static String text(JsonObject object, String key) {
         JsonElement value = object.get(key);
         return value == null || value.isJsonNull() ? "" : value.getAsString();
-    }
-
-    private JsonObject message(String role, String content) {
-        JsonObject object = new JsonObject();
-        object.addProperty("role", role);
-        object.addProperty("content", content);
-        return object;
     }
 
     private URI uri(String path) {
@@ -107,11 +128,5 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
 
     private void auth(HttpRequest.Builder builder) {
         if (config.apiKey != null && !config.apiKey.isBlank()) builder.header("Authorization", "Bearer " + config.apiKey);
-    }
-
-    private static void ensureSuccess(HttpResponse<String> response) {
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IllegalStateException("Provider returned HTTP " + response.statusCode() + ": " + response.body());
-        }
     }
 }

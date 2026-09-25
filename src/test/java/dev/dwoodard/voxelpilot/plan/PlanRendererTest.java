@@ -131,7 +131,7 @@ class PlanRendererTest {
 
     @Test
     void errorsNameTheComponent() {
-        var e = assertThrows(PlanException.class, () -> render("[{\"id\":\"base\",\"type\":\"pyramid\"}]"));
+        var e = assertThrows(PlanException.class, () -> render("[{\"id\":\"base\",\"type\":\"teapot\"}]"));
         assertTrue(e.getMessage().contains("'base'"));
         assertTrue(e.getMessage().contains("unknown type"));
     }

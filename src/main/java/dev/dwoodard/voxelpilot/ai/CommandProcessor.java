@@ -10,6 +10,8 @@ import dev.dwoodard.voxelpilot.ui.SettingsScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
 
@@ -25,12 +27,13 @@ public final class CommandProcessor {
         Consumer<String> reply = value -> { PaletteHistory.get().addAssistant(value); status.accept(value); };
 
         switch (lower) {
-            case "confirm", "confirm preview" -> {
+            // Short aliases so quick answers never reach the model.
+            case "confirm", "confirm preview", "c", "y", "yes", "ok", "go", "build it", "do it" -> {
                 BuildExecutor.get().confirm(mc).whenComplete((result, error) -> mc.execute(() ->
                     reply.accept(error != null ? "Confirm failed: " + rootMessage(error) : result.message())));
                 return;
             }
-            case "cancel", "cancel preview" -> {
+            case "cancel", "cancel preview", "x", "n", "no", "stop" -> {
                 if (BuildExecutor.get().active()) BuildExecutor.get().cancel();
                 GhostPreviewManager.get().clear();
                 reply.accept("Cancelled");
@@ -38,7 +41,7 @@ public final class CommandProcessor {
             }
             case "pause" -> { BuildExecutor.get().pause(); reply.accept("Build paused"); return; }
             case "resume", "continue" -> { BuildExecutor.get().resume(); reply.accept("Build resumed"); return; }
-            case "undo" -> { reply.accept(BuildExecutor.get().undo(mc).message()); return; }
+            case "undo", "u" -> { reply.accept(BuildExecutor.get().undo(mc).message()); return; }
             case "clear selection" -> { SelectionManager.get().clear(mc); reply.accept("Selection cleared"); return; }
             case "settings", "models", "configure" -> { mc.setScreen(new SettingsScreen()); return; }
         }
@@ -73,11 +76,16 @@ public final class CommandProcessor {
             }
             var resolved = outcome.resolved();
             if (resolved.changes().isEmpty()) {
+                GhostPreviewManager.get().restore(null);
                 reply.accept("Nothing to change - the world already matches that plan");
                 return;
             }
             GhostPreviewManager.get().setPlan(resolved);
-            String notes = resolved.notes().isEmpty() ? "" : " · " + String.join(" · ", resolved.notes());
+            List<String> allNotes = new ArrayList<>(resolved.notes());
+            if (!outcome.skipped().isEmpty()) {
+                allNotes.add("skipped " + outcome.skipped().size() + " line(s): " + outcome.skipped().get(0));
+            }
+            String notes = allNotes.isEmpty() ? "" : " · " + String.join(" · ", allNotes);
             reply.accept((plan.message == null || plan.message.isBlank() ? plan.title : plan.message)
                 + " · rev " + GhostPreviewManager.get().revision() + " · " + resolved.changes().size() + " changes" + notes);
             if (mc.player != null) mc.player.displayClientMessage(Component.literal("[VoxelPilot] Ghost preview ready · Cmd+Shift+K for details"), true);

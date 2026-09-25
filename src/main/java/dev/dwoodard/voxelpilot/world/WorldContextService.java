@@ -5,7 +5,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import dev.dwoodard.voxelpilot.build.Frame;
-import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.item.BlockItem;
@@ -20,8 +19,8 @@ import java.util.Map;
 // ("where is the ground") and a per-layer composition ("what's underground").
 public final class WorldContextService {
     private static final Gson GSON = new Gson();
-    private static final int MAX_GRID = 24;        // surface grid is at most 24x24 cells
-    private static final int MAX_LAYERS = 24;
+    private static final int MAX_GRID = 16;        // surface grid is at most 16x16 cells
+    private static final int MAX_LAYERS = 16;
     private static final int AROUND = 8;           // no-selection: +-8 blocks around the target
 
     private WorldContextService() {}
@@ -41,22 +40,15 @@ public final class WorldContextService {
             root.add("surface", surface(mc, frame, -AROUND, -AROUND, AROUND * 2 + 1, AROUND * 2 + 1, AROUND, -AROUND));
         }
 
+        // A selection is the whole answer to "where": the model gets no crosshair or player
+        // position to anchor to instead. Only whether the player stands inside it (safety).
         int[] p = frame.toLocal(mc.player.blockPosition());
-        JsonObject player = new JsonObject();
-        player.add("at", ints(p[0], p[1], p[2]));
         if (frame.hasSelection()) {
             boolean inside = p[0] >= 0 && p[0] < frame.width() && p[1] >= 0 && p[1] < frame.height() && p[2] >= 0 && p[2] < frame.depth();
-            player.addProperty("insideSelection", inside);
+            if (inside) root.addProperty("playerInsideSelection", true);
+        } else {
+            root.add("player", ints(p[0], p[1], p[2]));
         }
-        root.add("player", player);
-
-        SelectionManager.get().crosshairTarget(mc).ifPresent(pos -> {
-            int[] c = frame.toLocal(pos);
-            JsonObject look = new JsonObject();
-            look.add("at", ints(c[0], c[1], c[2]));
-            look.addProperty("block", id(mc.level.getBlockState(pos)));
-            root.add("lookingAt", look);
-        });
 
         if (!mc.player.getAbilities().instabuild) root.add("inventory", inventory(mc));
         return GSON.toJson(root);
@@ -68,6 +60,8 @@ public final class WorldContextService {
         int stride = Math.max(1, (int) Math.ceil(Math.max(w, d) / (double) MAX_GRID));
         Map<String, Integer> blocks = new LinkedHashMap<>();
         JsonArray rows = new JsonArray();
+        Integer flat = null;
+        boolean isFlat = true;
         for (int z = z0; z < z0 + d; z += stride) {
             JsonArray row = new JsonArray();
             for (int x = x0; x < x0 + w; x += stride) {
@@ -81,14 +75,21 @@ public final class WorldContextService {
                     }
                 }
                 if (top == null) row.add(JsonNull.INSTANCE); else row.add(top);
+                if (top == null || (flat != null && !flat.equals(top))) isFlat = false;
+                if (flat == null) flat = top;
             }
             rows.add(row);
         }
         JsonObject out = new JsonObject();
-        out.add("from", ints(x0, z0));
-        out.addProperty("stride", stride);
-        out.add("heights", rows);
-        out.add("blocks", top(blocks, 6));
+        // Most builds sit on level ground: one number instead of a grid.
+        if (isFlat && flat != null) {
+            out.addProperty("flat", flat);
+        } else {
+            out.add("from", ints(x0, z0));
+            out.addProperty("stride", stride);
+            out.add("heights", rows);
+        }
+        out.add("blocks", top(blocks, 4));
         return out;
     }
 
@@ -97,6 +98,8 @@ public final class WorldContextService {
         int yStride = Math.max(1, (int) Math.ceil(frame.height() / (double) MAX_LAYERS));
         int xzStride = Math.max(1, (int) Math.ceil(Math.max(frame.width(), frame.depth()) / (double) MAX_GRID));
         JsonArray out = new JsonArray();
+        JsonObject run = null;
+        int runTop = 0;
         for (int y = frame.height() - 1; y >= 0; y -= yStride) {
             Map<String, Integer> counts = new LinkedHashMap<>();
             for (int z = 0; z < frame.depth(); z += xzStride) {
@@ -104,10 +107,17 @@ public final class WorldContextService {
                     counts.merge(id(mc.level.getBlockState(frame.toWorld(x, y, z))), 1, Integer::sum);
                 }
             }
-            JsonObject layer = new JsonObject();
-            layer.addProperty("y", y);
-            layer.add("blocks", top(counts, 3));
-            out.add(layer);
+            JsonObject blocks = top(counts, 3);
+            // Runs of identical layers (all air above ground, all stone below) collapse to "y":"3-15".
+            if (run != null && run.get("blocks").equals(blocks)) {
+                run.addProperty("y", y + "-" + runTop);
+                continue;
+            }
+            run = new JsonObject();
+            runTop = y;
+            run.addProperty("y", String.valueOf(y));
+            run.add("blocks", blocks);
+            out.add(run);
         }
         return out;
     }

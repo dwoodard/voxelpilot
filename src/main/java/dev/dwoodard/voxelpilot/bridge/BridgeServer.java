@@ -6,7 +6,6 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import dev.dwoodard.voxelpilot.VoxelPilot;
 import dev.dwoodard.voxelpilot.ai.ProviderFactory;
-import dev.dwoodard.voxelpilot.ai.BuildPlan;
 import dev.dwoodard.voxelpilot.ai.ChatMessage;
 
 import java.io.IOException;
@@ -15,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 public final class BridgeServer {
     private static final Gson GSON = new Gson();
@@ -47,9 +47,9 @@ public final class BridgeServer {
 
     public synchronized boolean isRunning() { return server != null; }
 
-    public CompletableFuture<BuildPlan> plan(List<ChatMessage> messages) {
+    public CompletableFuture<String> stream(List<ChatMessage> messages, Consumer<String> onLine) {
         ensureRunning();
-        return ProviderFactory.current().plan(messages);
+        return ProviderFactory.current().stream(messages, onLine);
     }
 
     private void health(HttpExchange exchange) throws IOException {

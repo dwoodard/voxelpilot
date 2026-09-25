@@ -10,7 +10,8 @@ import java.util.Locale;
 final class Shapes {
     static final int MAX_DIM = 128;
     static final int MAX_RAW_BLOCKS = 512;
-    static final String TYPES = "box, stairs, roof, door, blocks";
+    static final String TYPES = "box, stairs, roof, door, blocks, circle, sphere, line, pyramid";
+    static final int MAX_RADIUS = 64;
 
     private Shapes() {}
 
@@ -22,6 +23,10 @@ final class Shapes {
             case "roof" -> roof(node);
             case "door" -> door(node);
             case "blocks" -> blocks(node);
+            case "circle" -> Primitives.circle(node);
+            case "sphere" -> Primitives.sphere(node);
+            case "line" -> Primitives.line(node);
+            case "pyramid" -> Primitives.pyramid(node);
             default -> throw new PlanException("unknown type '" + node.type + "' (use " + TYPES + ")");
         };
     }
@@ -152,7 +157,7 @@ final class Shapes {
         return out;
     }
 
-    private static int[] size(PlanNode node) {
+    static int[] size(PlanNode node) {
         int[] s = triple(node.size, "size");
         for (int v : s) if (v < 1 || v > MAX_DIM) throw new PlanException("size values must be 1.." + MAX_DIM);
         return s;
@@ -163,13 +168,13 @@ final class Shapes {
         return values;
     }
 
-    private static int range(Integer value, String name, int min, int max) {
+    static int range(Integer value, String name, int min, int max) {
         if (value == null) throw new PlanException(name + " is required");
         if (value < min || value > max) throw new PlanException(name + " must be " + min + ".." + max);
         return value;
     }
 
-    private static BlockSpec required(String block, String name) {
+    static BlockSpec required(String block, String name) {
         if (block == null || block.isBlank()) throw new PlanException(name + " is required");
         return BlockSpec.parse(block);
     }

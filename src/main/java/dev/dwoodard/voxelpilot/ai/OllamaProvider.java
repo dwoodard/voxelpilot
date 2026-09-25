@@ -11,6 +11,9 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public final class OllamaProvider implements ModelProvider {
     private static final Gson GSON = new Gson();
@@ -43,31 +46,48 @@ public final class OllamaProvider implements ModelProvider {
         });
     }
 
+    // Ollama streams newline-delimited JSON objects, each with a message.content fragment.
     @Override
-    public CompletableFuture<BuildPlan> plan(List<ChatMessage> messages) {
+    public CompletableFuture<String> stream(List<ChatMessage> messages, Consumer<String> onLine) {
         JsonObject body = new JsonObject();
         body.addProperty("model", config.model);
-        body.addProperty("stream", false);
+        body.addProperty("stream", true);
         JsonObject options = new JsonObject();
-        options.addProperty("num_predict", 8000);
+        options.addProperty("num_predict", 3000);
+        options.addProperty("temperature", 0.2);
         body.add("options", options);
         JsonArray messagesJson = new JsonArray();
         for (ChatMessage m : messages) messagesJson.add(message(m.role(), m.content()));
         body.add("messages", messagesJson);
-        // Ollama 0.5+ accepts a JSON schema here for constrained decoding.
-        body.add("format", PlanJson.schema());
         HttpRequest request = HttpRequest.newBuilder(uri("/api/chat"))
             .header("Content-Type", "application/json")
-            .timeout(Duration.ofSeconds(180))
+            .timeout(Duration.ofSeconds(120))
             .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body)))
             .build();
-        return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
-            ensureSuccess(response);
-            JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
-            JsonElement doneReason = root.get("done_reason");
-            if (doneReason != null && !doneReason.isJsonNull() && "length".equals(doneReason.getAsString())) throw PlanJson.truncated();
-            return PlanJson.parse(root.getAsJsonObject("message").get("content").getAsString());
-        });
+        return HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofLines()).thenApplyAsync(response -> {
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                String error;
+                try (Stream<String> lines = response.body()) { error = lines.collect(Collectors.joining("\n")); }
+                throw new IllegalStateException("Ollama HTTP " + response.statusCode() + ": " + error);
+            }
+            LineSplitter splitter = new LineSplitter(onLine);
+            String doneReason = null;
+            try (Stream<String> lines = response.body()) {
+                for (String line : (Iterable<String>) lines::iterator) {
+                    if (line.isBlank()) continue;
+                    JsonObject chunk = JsonParser.parseString(line).getAsJsonObject();
+                    JsonObject message = chunk.getAsJsonObject("message");
+                    if (message != null && message.has("content") && !message.get("content").isJsonNull()) {
+                        splitter.accept(message.get("content").getAsString());
+                    }
+                    if (chunk.has("done_reason") && !chunk.get("done_reason").isJsonNull()) doneReason = chunk.get("done_reason").getAsString();
+                }
+            }
+            splitter.flush();
+            if ("length".equals(doneReason)) throw PlanJson.truncated();
+            if (splitter.text().isBlank()) throw new IllegalStateException("Model returned an empty answer");
+            return splitter.text();
+        }, ModelProvider.STREAM_EXECUTOR);
     }
 
     private JsonObject message(String role, String content) {

@@ -39,6 +39,7 @@ public final class BuildExecutor {
     // the build has actually been queued.
     public CompletableFuture<Result> confirm(Minecraft mc) {
         if (mc.player == null) return CompletableFuture.completedFuture(Result.fail("No player"));
+        if (GhostPreviewManager.get().drafting()) return CompletableFuture.completedFuture(Result.fail("Still planning - wait for the preview to finish"));
         var plan = GhostPreviewManager.get().plan();
         if (plan.isEmpty() || plan.get().changes().isEmpty()) return CompletableFuture.completedFuture(Result.fail("No ghost preview to confirm"));
         MinecraftServer server = mc.getSingleplayerServer();

@@ -38,6 +38,22 @@ dependencies {
 
 tasks.named('test', Test).configure { useJUnitPlatform() }
 
+// Copy the finished jar into a Minecraft instance's mods folder after every build.
+// Set modsDir in the git-ignored local.properties (or pass -PmodsDir=...); without it,
+// build behaves normally and nothing is copied.
+def localProps = new Properties()
+if (file('local.properties').exists()) file('local.properties').withInputStream { localProps.load(it) }
+def modsDir = project.findProperty('modsDir') ?: localProps.getProperty('modsDir')
+
+tasks.register('installMod', Copy) {
+    dependsOn 'reobfJar'
+    from tasks.named('jar').flatMap { it.archiveFile }
+    into modsDir ?: layout.buildDirectory.dir('no-mods-dir')
+    onlyIf { modsDir != null }
+    doLast { println "VoxelPilot installed to ${modsDir}" }
+}
+if (modsDir != null) tasks.named('build') { finalizedBy 'installMod' }
+
 // Offline check of the planning prompt against a real model (no Minecraft needed):
 //   ./bootstrap.sh evalPlans -PevalModel=qwen/qwen3.5-9b [-PevalUrl=http://127.0.0.1:1234/v1]
 tasks.register('evalPlans', JavaExec) {

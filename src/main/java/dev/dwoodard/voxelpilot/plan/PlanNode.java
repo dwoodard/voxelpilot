@@ -22,6 +22,22 @@ public final class PlanNode {
     public String ends;        // roof: block filling the gable triangles
     public List<RawBlock> blocks;
 
+    // circle / sphere
+    public Integer radius;
+    public Integer radiusZ;     // circle: second radius along z for an oval
+    public Integer thickness;   // circle: ring thickness when not filled
+    public Boolean filled;
+    public String fillBlock;   // circle: interior block when it differs from the rim
+    public Boolean even;       // circle: even diameter (center between blocks)
+    public Integer arcStart;   // circle: degrees, 0 = forward, 90 = right
+    public Integer arcEnd;
+    public Double squareness;  // circle: 0 = round .. 1 = square
+    public Integer height;     // circle: extrude upward into a cylinder or round wall
+    public Boolean dome;       // sphere: top half only
+
+    // line: end point, in the same coordinates as "at"
+    public int[] to;
+
     public static final class RawBlock {
         public int[] at;
         public String block;
