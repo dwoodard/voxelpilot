@@ -114,6 +114,14 @@ public final class CommandPaletteScreen extends Screen {
             input.setCursorPosition(input.getValue().length());
             return true;
         }
+        // Cmd+Shift+Enter confirms the preview from inside the palette too, whatever is typed.
+        boolean cmd = (modifiers & (GLFW.GLFW_MOD_SUPER | GLFW.GLFW_MOD_CONTROL)) != 0;
+        if ((keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) && cmd && (modifiers & GLFW.GLFW_MOD_SHIFT) != 0) {
+            status = "Working…";
+            historyIndex = -1;
+            CommandProcessor.run(Minecraft.getInstance(), "confirm", value -> status = value);
+            return true;
+        }
         if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
             String command = input.getValue().trim();
             if (command.isEmpty() && !suggestions.isEmpty()) command = suggestions.get(selected);

@@ -12,6 +12,7 @@ import dev.dwoodard.voxelpilot.plan.PlanScript;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import dev.dwoodard.voxelpilot.world.BlockCatalog;
 import dev.dwoodard.voxelpilot.world.WorldContextService;
+import dev.dwoodard.voxelpilot.world.WorldFacts;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 
@@ -62,6 +63,8 @@ public final class AiPlanner {
         Rules: use as few lines as possible. Vague materials get a sensible vanilla block (wood = oak_planks). No sizes given: use the whole selection. Stay inside the selection.
         Don't remove existing blocks unless asked. Not a build request: reply with only a say line.
         CURRENT SCRIPT given: output the complete revised script, changing only what was asked.
+        FACTS are exact measurements (distances, directions, what lies along the way and around). Use their numbers
+        instead of doing your own geometry.
         RECENT lists earlier requests, their scripts, and what happened (confirmed, cancelled, undone, lines
         skipped and why). Use it for "again", "the same", "that", and to avoid repeating a rejected line.
 
@@ -105,6 +108,8 @@ public final class AiPlanner {
             content.append("\nCURRENT SCRIPT:\n").append(String.join("\n", previous.plan().script)).append('\n');
         }
         content.append("\nWORLD: ").append(WorldContextService.capture(mc, frame.get()));
+        String facts = WorldFacts.describe(mc, frame.get());
+        if (!facts.isEmpty()) content.append("\n\nFACTS (measured by the mod):\n").append(facts);
         // Live from the game registry (mods included): only blocks the request points to.
         String lookup = userPrompt + (previous == null ? "" : " " + String.join(" ", previous.plan().script));
         List<BlockCatalog.Entry> blocks = BlockCatalog.search(lookup, 20);

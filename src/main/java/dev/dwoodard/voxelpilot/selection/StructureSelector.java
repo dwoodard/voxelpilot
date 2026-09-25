@@ -110,7 +110,7 @@ public final class StructureSelector {
     }
 
     // Terrain and plants: what a structure sits in, not what it's made of.
-    static boolean isNatural(BlockState state) {
+    public static boolean isNatural(BlockState state) {
         if (state.isAir() || !state.getFluidState().isEmpty() || state.canBeReplaced()) return true;
         return state.is(BlockTags.BASE_STONE_OVERWORLD) || state.is(BlockTags.BASE_STONE_NETHER)
             || state.is(BlockTags.DIRT) || state.is(BlockTags.SAND) || state.is(BlockTags.LEAVES)

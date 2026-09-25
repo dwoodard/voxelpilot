@@ -38,6 +38,7 @@ public final class BridgeServer {
             server.createContext("/map", this::map);
             server.createContext("/inspect", this::inspect);
             server.createContext("/plan", this::plan);
+            server.createContext("/facts", this::facts);
             server.createContext("/cancel", this::cancel);
             server.setExecutor(Executors.newCachedThreadPool());
             server.start();
@@ -157,6 +158,15 @@ public final class BridgeServer {
                 return r;
             });
             send(exchange, 200, GSON.toJson(result));
+        });
+    }
+
+    // GET /facts -> the exact FACTS block a planning request would include right now
+    private void facts(HttpExchange exchange) throws IOException {
+        handle(exchange, () -> {
+            requireWorld();
+            var pinned = frameParam(exchange);
+            sendText(exchange, onClient(mc -> dev.dwoodard.voxelpilot.world.WorldFacts.describe(mc, pinned.orElseGet(() -> Perception.frame(mc)))));
         });
     }
 
