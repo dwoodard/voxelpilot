@@ -101,9 +101,12 @@ public final class CommandPaletteScreen extends Screen {
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_L && (modifiers & (GLFW.GLFW_MOD_SUPER | GLFW.GLFW_MOD_CONTROL)) != 0) {
+            // Same as cls: ghost, chat, and AI history.
+            dev.dwoodard.voxelpilot.build.GhostPreviewManager.get().clear();
             PaletteHistory.get().clear();
+            dev.dwoodard.voxelpilot.ai.RecentHistory.get().clear();
             historyIndex = -1;
-            status = "Type what you want VoxelPilot to do";
+            status = "Reset · preview, chat, and AI history cleared";
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_TAB && !suggestions.isEmpty()) {

@@ -233,10 +233,9 @@ final class Perception {
 
     // Client thread: exact blocks in a local box, one character per block with a legend.
     // Layers top to bottom; rows far (high z) to near, matching the map's orientation.
-    static String inspect(Minecraft mc, int x, int y, int z, int w, int h, int d) {
+    static String inspect(Minecraft mc, Frame frame, int x, int y, int z, int w, int h, int d) {
         if (w < 1 || h < 1 || d < 1) return "error: size must be positive";
         if ((long) w * h * d > MAX_INSPECT) return "error: region too large (max " + MAX_INSPECT + " blocks); inspect a smaller box";
-        Frame frame = frame(mc);
         Map<String, Character> legend = new LinkedHashMap<>();
         StringBuilder grid = new StringBuilder();
         for (int ly = y + h - 1; ly >= y; ly--) {

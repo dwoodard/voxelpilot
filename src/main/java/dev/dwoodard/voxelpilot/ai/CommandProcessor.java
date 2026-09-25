@@ -5,6 +5,7 @@ import dev.dwoodard.voxelpilot.build.BuildExecutor;
 import dev.dwoodard.voxelpilot.build.BuildSpeed;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
 import dev.dwoodard.voxelpilot.build.MoveService;
+import dev.dwoodard.voxelpilot.build.PreviewMover;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import dev.dwoodard.voxelpilot.selection.StructureSelector;
 import dev.dwoodard.voxelpilot.ui.SettingsScreen;
@@ -24,10 +25,18 @@ public final class CommandProcessor {
         String lower = input.toLowerCase(Locale.ROOT);
         if (input.isBlank()) return;
 
-        if (lower.equals("clear chat") || lower.equals("cls")) {
+        if (lower.equals("clear chat")) {
             PaletteHistory.get().clear();
             RecentHistory.get().clear();
             status.accept("Type what you want VoxelPilot to do");
+            return;
+        }
+        // Full reset: ghost, chat, and everything the AI remembers. The selection stays.
+        if (lower.equals("cls") || lower.equals("reset") || lower.equals("clear all") || lower.equals("start over")) {
+            GhostPreviewManager.get().clear();
+            PaletteHistory.get().clear();
+            RecentHistory.get().clear();
+            status.accept("Reset · preview, chat, and AI history cleared");
             return;
         }
 
@@ -44,7 +53,7 @@ public final class CommandProcessor {
                 }));
                 return;
             }
-            case "cancel", "cancel preview", "x", "n", "no", "stop" -> {
+            case "cancel", "cancel preview", "x", "n", "no", "stop", "clear preview", "clear ghost", "remove preview", "clear the preview" -> {
                 if (BuildExecutor.get().active()) BuildExecutor.get().cancel();
                 GhostPreviewManager.get().clear();
                 RecentHistory.get().mark("cancelled");
@@ -80,6 +89,31 @@ public final class CommandProcessor {
         if (named.matches()) {
             var result = StructureSelector.selectConnectedSame(mc, named.group(1));
             if (result.isPresent()) { reply.accept(result.get()); return; }
+        }
+
+        // Moving or turning the preview is geometry, not a new plan: no model needed.
+        if (GhostPreviewManager.get().hasPreview()) {
+            var move = java.util.regex.Pattern.compile("(?:move|shift|nudge|slide)(?: it| the preview| preview)? (left|right|forward|forwards|back|backward|backwards|up|down)(?: (\\d+))?(?: blocks?)?").matcher(lower);
+            if (move.matches()) {
+                int n = move.group(2) == null ? 1 : Math.min(256, Integer.parseInt(move.group(2)));
+                String result = switch (move.group(1)) {
+                    case "left" -> PreviewMover.move(mc, -n, 0, 0);
+                    case "right" -> PreviewMover.move(mc, n, 0, 0);
+                    case "forward", "forwards" -> PreviewMover.move(mc, 0, 0, n);
+                    case "up" -> PreviewMover.move(mc, 0, n, 0);
+                    case "down" -> PreviewMover.move(mc, 0, -n, 0);
+                    default -> PreviewMover.move(mc, 0, 0, -n);
+                };
+                reply.accept(result);
+                return;
+            }
+            switch (lower) {
+                case "rotate", "rotate it", "rotate right", "rotate it right", "turn right", "turn it right" -> { reply.accept(PreviewMover.rotate(mc, 1)); return; }
+                case "rotate left", "rotate it left", "turn left", "turn it left" -> { reply.accept(PreviewMover.rotate(mc, -1)); return; }
+                case "turn around", "turn it around", "rotate 180", "flip it around" -> { reply.accept(PreviewMover.rotate(mc, 2)); return; }
+                case "move here", "move it here", "put it here", "place it here" -> { reply.accept(PreviewMover.moveHere(mc)); return; }
+                case "drop", "drop it", "snap to ground", "put it on the ground", "ground it" -> { reply.accept(PreviewMover.drop(mc)); return; }
+            }
         }
 
         if (lower.startsWith("speed ")) {

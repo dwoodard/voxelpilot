@@ -123,7 +123,8 @@ public final class BridgeServer {
             requireWorld();
             int x = intParam(exchange, "x", 0), y = intParam(exchange, "y", 0), z = intParam(exchange, "z", 0);
             int w = intParam(exchange, "w", 8), h = intParam(exchange, "h", 4), d = intParam(exchange, "d", 8);
-            sendText(exchange, onClient(mc -> Perception.inspect(mc, x, y, z, w, h, d)));
+            var pinned = frameParam(exchange);
+            sendText(exchange, onClient(mc -> Perception.inspect(mc, pinned.orElseGet(() -> Perception.frame(mc)), x, y, z, w, h, d)));
         });
     }
 
@@ -136,7 +137,7 @@ public final class BridgeServer {
             requireWorld();
             String script = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             JsonObject result = onClient(mc -> {
-                var outcome = dev.dwoodard.voxelpilot.ai.AiPlanner.applyScript(mc, script, Perception.frame(mc));
+                var outcome = dev.dwoodard.voxelpilot.ai.AiPlanner.applyScript(mc, script, frameParam(exchange).orElseGet(() -> Perception.frame(mc)));
                 JsonObject r = new JsonObject();
                 r.addProperty("title", outcome.plan().title);
                 r.addProperty("message", outcome.plan().message);
@@ -187,6 +188,27 @@ public final class BridgeServer {
 
     private static void requireWorld() throws Exception {
         if (!onClient(mc -> mc.player != null && mc.level != null)) throw new IllegalStateException("Not in a world");
+    }
+
+    // ?origin=x,y,z&forward=west pins the frame to world coordinates, so an agent's script
+    // or inspection doesn't drift when the player selects or previews something else.
+    private static java.util.Optional<dev.dwoodard.voxelpilot.build.Frame> frameParam(HttpExchange exchange) {
+        String origin = stringParam(exchange, "origin"), forward = stringParam(exchange, "forward");
+        if (origin == null) return java.util.Optional.empty();
+        String[] p = origin.split(",");
+        if (p.length != 3) throw new IllegalArgumentException("origin must be x,y,z");
+        var dir = forward == null ? net.minecraft.core.Direction.NORTH : net.minecraft.core.Direction.byName(forward.toLowerCase());
+        if (dir == null || !dir.getAxis().isHorizontal()) throw new IllegalArgumentException("forward must be north, south, east, or west");
+        return java.util.Optional.of(new dev.dwoodard.voxelpilot.build.Frame(new net.minecraft.core.BlockPos(
+            Integer.parseInt(p[0].trim()), Integer.parseInt(p[1].trim()), Integer.parseInt(p[2].trim())), dir, 0, 0, 0));
+    }
+
+    private static String stringParam(HttpExchange exchange, String name) {
+        String query = exchange.getRequestURI().getRawQuery();
+        if (query != null) for (String pair : query.split("&")) {
+            if (pair.startsWith(name + "=")) return java.net.URLDecoder.decode(pair.substring(name.length() + 1), StandardCharsets.UTF_8);
+        }
+        return null;
     }
 
     private static int intParam(HttpExchange exchange, String name, int fallback) {

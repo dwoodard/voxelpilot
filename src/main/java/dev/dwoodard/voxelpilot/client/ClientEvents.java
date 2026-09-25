@@ -5,6 +5,7 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.dwoodard.voxelpilot.bridge.BridgeServer;
 import dev.dwoodard.voxelpilot.build.BuildExecutor;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
+import dev.dwoodard.voxelpilot.build.PreviewMover;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import dev.dwoodard.voxelpilot.ui.CommandPaletteScreen;
 import dev.dwoodard.voxelpilot.ui.InspectorScreen;
@@ -79,6 +80,27 @@ public final class ClientEvents {
         }
 
         if (mc.screen != null) return;
+
+        // Cmd = "the preview" (plain arrows = the selection): slide it, raise/lower it, turn it.
+        if (command && GhostPreviewManager.get().hasPreview()) {
+            String moved = null;
+            if (alt && key == GLFW.GLFW_KEY_UP) moved = PreviewMover.move(mc, 0, 1, 0);
+            else if (alt && key == GLFW.GLFW_KEY_DOWN) moved = PreviewMover.move(mc, 0, -1, 0);
+            else if (key == GLFW.GLFW_KEY_UP) moved = PreviewMover.move(mc, 0, 0, 1);
+            else if (key == GLFW.GLFW_KEY_DOWN) moved = PreviewMover.move(mc, 0, 0, -1);
+            else if (key == GLFW.GLFW_KEY_LEFT) moved = PreviewMover.move(mc, -1, 0, 0);
+            else if (key == GLFW.GLFW_KEY_RIGHT) moved = PreviewMover.move(mc, 1, 0, 0);
+            else if (key == GLFW.GLFW_KEY_RIGHT_BRACKET && event.getAction() == GLFW.GLFW_PRESS) moved = PreviewMover.rotate(mc, 1);
+            else if (key == GLFW.GLFW_KEY_LEFT_BRACKET && event.getAction() == GLFW.GLFW_PRESS) moved = PreviewMover.rotate(mc, -1);
+            else if (key == GLFW.GLFW_KEY_BACKSPACE && event.getAction() == GLFW.GLFW_PRESS) {
+                GhostPreviewManager.get().clear();
+                moved = "Preview cleared";
+            }
+            if (moved != null) {
+                if (mc.player != null) mc.player.displayClientMessage(Component.literal("[VoxelPilot] " + moved), true);
+                return;
+            }
+        }
 
         if (event.getAction() == GLFW.GLFW_PRESS && key == GLFW.GLFW_KEY_J) {
             if (shift) SelectionManager.get().clear(mc);
