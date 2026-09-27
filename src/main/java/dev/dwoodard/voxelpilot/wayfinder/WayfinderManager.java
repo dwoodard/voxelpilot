@@ -92,12 +92,51 @@ public final class WayfinderManager {
     }
 
     private static BlockPos approachPosition(Minecraft mc, BlockPos target) {
-        // V1 approach is the walkable surface at the target's X/Z. Keeping this separate
-        // from the exact target lets the renderer guide like an aircraft approach now and
-        // lets terrain-aware routing choose a better arrival point later.
+        // Prefer the surface directly above the target, but only when a standing player
+        // fits: solid/supporting floor plus two blocks of collision-free body/head space.
+        // If that column is blocked (tree, roof, etc.), expand outward to the nearest
+        // player-sized surface approach instead of placing an unusable marker.
+        final int maxRadius = 8;
+        for (int radius = 0; radius <= maxRadius; radius++) {
+            BlockPos best = null;
+            double bestDistance = Double.MAX_VALUE;
+
+            for (int dx = -radius; dx <= radius; dx++) {
+                for (int dz = -radius; dz <= radius; dz++) {
+                    if (radius > 0 && Math.max(Math.abs(dx), Math.abs(dz)) != radius) continue;
+
+                    int x = target.getX() + dx;
+                    int z = target.getZ() + dz;
+                    int y = mc.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, x, z);
+                    BlockPos feet = new BlockPos(x, y, z);
+
+                    if (!canPlayerStandAt(mc, feet)) continue;
+
+                    double distance = feet.distSqr(target);
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        best = feet;
+                    }
+                }
+            }
+
+            if (best != null) return best.immutable();
+        }
+
+        // Fallback keeps guidance available if no valid approach exists nearby. The
+        // renderer still treats this as directional guidance, not a guaranteed route.
         int surfaceY = mc.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,
             target.getX(), target.getZ());
         return new BlockPos(target.getX(), surfaceY, target.getZ());
+    }
+
+    private static boolean canPlayerStandAt(Minecraft mc, BlockPos feet) {
+        BlockPos floor = feet.below();
+        if (mc.level.getBlockState(floor).getCollisionShape(mc.level, floor).isEmpty()) return false;
+        if (!mc.level.getBlockState(feet).getCollisionShape(mc.level, feet).isEmpty()) return false;
+
+        BlockPos head = feet.above();
+        return mc.level.getBlockState(head).getCollisionShape(mc.level, head).isEmpty();
     }
 
     public Optional<Target> active() { return Optional.ofNullable(active); }
