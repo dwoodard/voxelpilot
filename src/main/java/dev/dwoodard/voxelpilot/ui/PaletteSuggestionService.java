@@ -1,0 +1,131 @@
+package dev.dwoodard.voxelpilot.ui;
+
+import com.mojang.brigadier.ParseResults;
+import com.mojang.brigadier.suggestion.Suggestion;
+import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
+import net.minecraft.client.Minecraft;
+import net.minecraft.commands.SharedSuggestionProvider;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.function.Consumer;
+
+public final class PaletteSuggestionService {
+    public enum Source { SERVER, REFERENCE, VOXELPILOT, RECENT }
+
+    public record Item(String value, String label, Source source) {}
+
+    private PaletteSuggestionService() {}
+
+    public static void suggestions(Minecraft mc, String input, Consumer<List<Item>> callback) {
+        String value = input == null ? "" : input;
+        Token token = activeToken(value);
+
+        if (token.text().startsWith("@")) {
+            callback.accept(referenceSuggestions(mc, value, token));
+            return;
+        }
+
+        if (value.startsWith("/")) {
+            commandSuggestions(mc, value, callback);
+            return;
+        }
+
+        callback.accept(contextSuggestions(value));
+    }
+
+    private static void commandSuggestions(Minecraft mc, String input, Consumer<List<Item>> callback) {
+        if (mc.getConnection() == null) {
+            callback.accept(voxelPilotCommands(input));
+            return;
+        }
+
+        String command = input.substring(1);
+        var dispatcher = mc.getConnection().getCommands();
+        SharedSuggestionProvider source = mc.getConnection().getSuggestionsProvider();
+        ParseResults<SharedSuggestionProvider> parsed = dispatcher.parse(command, source);
+
+        dispatcher.getCompletionSuggestions(parsed).whenComplete((result, error) -> mc.execute(() -> {
+            Map<String, Item> merged = new LinkedHashMap<>();
+
+            if (error == null && result != null) {
+                for (Suggestion suggestion : result.getList()) {
+                    String completed = "/" + suggestion.apply(command);
+                    merged.put(completed, new Item(completed, completed, Source.SERVER));
+                }
+            }
+
+            for (Item item : voxelPilotCommands(input)) merged.putIfAbsent(item.value(), item);
+            for (Item item : CommandUsageStore.get().matching(input, 12)) merged.putIfAbsent(item.value(), item);
+
+            List<Item> ranked = merged.values().stream()
+                .sorted((a, b) -> Integer.compare(score(b, input), score(a, input)))
+                .limit(8)
+                .toList();
+            callback.accept(ranked);
+        }));
+    }
+
+    private static List<Item> voxelPilotCommands(String input) {
+        String lower = input.toLowerCase(Locale.ROOT);
+        List<Item> items = new ArrayList<>();
+        if ("/wayfinder".startsWith(lower) || lower.startsWith("/wayfinder")) {
+            if (lower.startsWith("/wayfinder")) {
+                String query = input.length() > 10 ? input.substring(10).trim() : "";
+                for (WayfinderManager.Suggestion suggestion : WayfinderManager.get().suggestions(query, 8)) {
+                    String value = "/wayfinder " + suggestion.id();
+                    items.add(new Item(value, value, Source.VOXELPILOT));
+                }
+            } else {
+                items.add(new Item("/wayfinder", "/wayfinder", Source.VOXELPILOT));
+            }
+        }
+        return items;
+    }
+
+    private static List<Item> referenceSuggestions(Minecraft mc, String input, Token token) {
+        if (mc.getConnection() == null) return List.of();
+
+        String needle = token.text().substring(1).toLowerCase(Locale.ROOT);
+        return mc.getConnection().getOnlinePlayers().stream()
+            .map(info -> info.getProfile().getName())
+            .filter(name -> needle.isBlank() || name.toLowerCase(Locale.ROOT).startsWith(needle))
+            .sorted(String.CASE_INSENSITIVE_ORDER)
+            .limit(8)
+            .map(name -> {
+                String completed = input.substring(0, token.start()) + "@" + name + input.substring(token.end());
+                return new Item(completed, "@" + name, Source.REFERENCE);
+            })
+            .toList();
+    }
+
+    private static List<Item> contextSuggestions(String input) {
+        if (!input.isBlank()) return List.of();
+        return List.of(
+            new Item("/", "/", Source.SERVER),
+            new Item("@", "@", Source.REFERENCE)
+        );
+    }
+
+    private static int score(Item item, String input) {
+        String lower = input.toLowerCase(Locale.ROOT);
+        String value = item.value().toLowerCase(Locale.ROOT);
+        int score = CommandUsageStore.get().score(item.value());
+        if (value.equals(lower)) score += 100_000;
+        else if (value.startsWith(lower)) score += 50_000;
+        if (item.source() == Source.SERVER) score += 1_000;
+        return score;
+    }
+
+    private static Token activeToken(String input) {
+        int cursor = input.length();
+        int start = cursor;
+        while (start > 0 && !Character.isWhitespace(input.charAt(start - 1))) start--;
+        return new Token(start, cursor, input.substring(start, cursor));
+    }
+
+    private record Token(int start, int end, String text) {}
+}
