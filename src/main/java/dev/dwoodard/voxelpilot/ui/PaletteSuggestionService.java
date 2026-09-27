@@ -30,6 +30,14 @@ public final class PaletteSuggestionService {
             return;
         }
 
+        if (token.text().startsWith("#")) {
+            String name = token.text().substring(1);
+            if (!name.isBlank()) {
+                callback.accept(List.of(new Item(value, "#" + name + "  ·  designate here", Source.VOXELPILOT)));
+                return;
+            }
+        }
+
         if (value.startsWith("/")) {
             commandSuggestions(mc, value, callback);
             return;
@@ -103,7 +111,8 @@ public final class PaletteSuggestionService {
         if (!input.isBlank()) return List.of();
         return List.of(
             new Item("/", "/", Source.SERVER),
-            new Item("@", "@", Source.REFERENCE)
+            new Item("@", "@", Source.REFERENCE),
+            new Item("#", "#  ·  designate this location", Source.VOXELPILOT)
         );
     }
 
