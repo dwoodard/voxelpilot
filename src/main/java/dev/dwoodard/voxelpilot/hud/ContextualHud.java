@@ -83,41 +83,59 @@ public final class ContextualHud {
 
     private static void renderPinnedReferences(GuiGraphics gui, Minecraft mc) {
         var tokens = ReferencePins.get().tokens();
-        if (tokens.isEmpty()) return;
+        if (tokens.isEmpty() || mc.player == null || mc.level == null) return;
 
-        int x = 12;
-        int y = 12;
-        int width = 190;
-        int rowHeight = 12;
-        int height = 16 + tokens.size() * rowHeight;
-        gui.fill(x - 5, y - 5, x + width, y + height, 0x88000000);
-        gui.drawString(mc.font, "PINNED", x, y, 0xFF70FF8A, false);
+        // Pins are awareness cues, not panels. The active Wayfinder target owns the rich
+        // navigation UI; passive pins stay terse and live on the nearest screen edge.
+        int top = 34;
+        int bottom = gui.guiHeight() - 52;
+        int leftY = top;
+        int rightY = top;
+        int topX = 12;
+        int bottomX = 12;
 
-        int row = y + 14;
         for (String token : tokens) {
             String name = token.startsWith("@") ? token.substring(1) : token;
             var resolved = ReferenceResolver.resolve(mc, name);
-            String line;
-            if (resolved.isEmpty()) {
-                line = token.toUpperCase() + "  UNKNOWN";
-            } else {
-                var reference = resolved.get();
-                StringBuilder detail = new StringBuilder(reference.token().substring(1).toUpperCase());
-                if (reference.distance() != null) {
-                    detail.append("  ").append(Math.round(reference.distance())).append("m");
-                    String bearing = reference.bearing();
-                    if (!bearing.isBlank()) detail.append(" ").append(bearing);
-                } else if (!reference.hasPosition()) {
-                    detail.append("  POSITION UNKNOWN");
-                } else if (mc.level != null
-                    && !mc.level.dimension().location().toString().equals(reference.dimension())) {
-                    detail.append("  ").append(reference.dimension());
+            if (resolved.isEmpty()) continue;
+            var reference = resolved.get();
+
+            // Unknown/stale spatial facts do not get a fake directional marker. Cmd-K is
+            // still the place to inspect them.
+            if (!reference.hasPosition()
+                || !mc.level.dimension().location().toString().equals(reference.dimension())) continue;
+
+            double dx = reference.x() - mc.player.getX();
+            double dz = reference.z() - mc.player.getZ();
+            double yaw = Math.toRadians(mc.player.getYRot());
+            double localX = dx * Math.cos(yaw) + dz * Math.sin(yaw);
+            double localZ = dz * Math.cos(yaw) - dx * Math.sin(yaw);
+
+            String distance = reference.distance() == null ? "" : " " + Math.round(reference.distance()) + "m";
+            String label = reference.name().toUpperCase() + distance;
+
+            // Pick the dominant relative direction. This is intentionally discrete: it is
+            // glanceable, stable, and much quieter than six continuously sliding widgets.
+            if (Math.abs(localX) > Math.abs(localZ)) {
+                if (localX < 0) {
+                    String line = "◀ " + label;
+                    gui.drawString(mc.font, line, 8, leftY, 0xFFB8C0C8, true);
+                    leftY += 12;
+                } else {
+                    String line = label + " ▶";
+                    int width = mc.font.width(line);
+                    gui.drawString(mc.font, line, gui.guiWidth() - width - 8, rightY, 0xFFB8C0C8, true);
+                    rightY += 12;
                 }
-                if (reference.online()) detail.append("  ONLINE");
-                line = detail.toString();
+            } else if (localZ < 0) {
+                String line = "▲ " + label;
+                gui.drawString(mc.font, line, topX, 8, 0xFFB8C0C8, true);
+                topX += mc.font.width(line) + 14;
+            } else {
+                String line = "▼ " + label;
+                gui.drawString(mc.font, line, bottomX, bottom, 0xFFB8C0C8, true);
+                bottomX += mc.font.width(line) + 14;
             }
-            gui.drawString(mc.font, line, x, row, 0xFFE8EAED, false);
-            row += rowHeight;
         }
     }
 
