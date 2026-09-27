@@ -61,14 +61,15 @@ public final class ContextualHud {
     }
 
     private static void renderHighestPriorityObservation(GuiGraphics gui, Minecraft mc, AwarenessState state) {
-        if (state.observations().isEmpty()) return;
+        if (state.observations().isEmpty() || state.phase() == AwarenessManager.Phase.NAVIGATING) return;
         var observation = state.observations().get(0);
-        String line = observation.severity() + "  //  " + observation.message();
+        String line = observation.severity() + " · " + observation.message();
         int width = mc.font.width(line);
-        int x = gui.guiWidth() - width - 12;
+        int x = gui.guiWidth() - width - 10;
         int y = gui.guiHeight() - 20;
-        gui.fill(x - 6, y - 4, gui.guiWidth() - 6, y + 12, 0x88000000);
-        gui.drawString(mc.font, line, x, y, 0xFFFFD36A, false);
+        // Terrain observations become visible when they can affect the next action rather
+        // than occupying HUD space throughout long-distance navigation.
+        gui.drawString(mc.font, line, x, y, 0xFFFFD36A, true);
     }
 
 
