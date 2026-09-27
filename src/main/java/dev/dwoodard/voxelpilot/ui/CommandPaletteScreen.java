@@ -31,7 +31,7 @@ public final class CommandPaletteScreen extends Screen {
         int y = Math.max(30, height / 5);
         input = new EditBox(font, x + 16, y + 16, w - 32, 24, Component.literal("Ask VoxelPilot"));
         input.setMaxLength(500);
-        input.setHint(Component.literal("/ action   @ reference   or type what you want…"));
+        input.setHint(Component.literal("/ command   @ reference   # designate   or ask VoxelPilot…"));
         input.setResponder(value -> { selected = 0; updateSuggestions(value); });
         addRenderableWidget(input);
         setInitialFocus(input);
@@ -88,11 +88,8 @@ public final class CommandPaletteScreen extends Screen {
             String command = input.getValue().trim();
             if (command.isEmpty() && !suggestions.isEmpty()) command = suggestions.get(selected).value();
 
-            // A selected @ reference completes the token; it is not itself an action.
-            if (!suggestions.isEmpty() && suggestions.get(Math.min(selected, suggestions.size() - 1)).value().startsWith("@")) {
-                acceptSuggestion();
-                return true;
-            }
+            // Tab completes. Enter submits the input exactly as typed; standalone @ references
+            // are deterministic and handled by CommandProcessor without invoking AI.
             if (!command.isEmpty()) {
                 String finalCommand = command;
                 CommandUsageStore.get().record(finalCommand);
@@ -109,6 +106,21 @@ public final class CommandPaletteScreen extends Screen {
                 }
             }
             return true;
+        }
+        if (keyCode == GLFW.GLFW_KEY_RIGHT && !suggestions.isEmpty()) {
+            PaletteSuggestionService.Item item = suggestions.get(Math.min(selected, suggestions.size() - 1));
+            if (item.source() == PaletteSuggestionService.Source.REFERENCE) {
+                String token = item.label().split("\\s")[0];
+                input.setValue("/wayfinder " + token);
+                input.setCursorPosition(input.getValue().length());
+                return true;
+            }
+        }
+        if (keyCode == GLFW.GLFW_KEY_LEFT) {
+            if (!input.getValue().isBlank()) {
+                input.setValue("");
+                return true;
+            }
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
