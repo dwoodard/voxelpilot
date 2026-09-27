@@ -133,6 +133,7 @@ public final class PaletteSuggestionService {
         else if (value.startsWith(lower)) score += 500_000;
         else if (fuzzyMatches(value, lower)) score += 100_000;
         else score += CommandUsageStore.get().score(item.value());
+        if (item.source() == Source.VOXELPILOT) score += 10_000;
         if (item.source() == Source.SERVER) score += 1_000;
         return score;
     }
