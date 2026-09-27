@@ -46,6 +46,11 @@ public final class CommandPaletteScreen extends Screen {
     }
 
 
+    public void showShortcuts() {
+        status = ShortcutRegistry.displayText();
+        PaletteHistory.get().addAssistant(status);
+    }
+
     private void acceptSuggestion() {
         if (suggestions.isEmpty()) return;
         PaletteSuggestionService.Item suggestion = suggestions.get(Math.min(selected, suggestions.size() - 1));
