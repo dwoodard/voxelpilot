@@ -161,7 +161,7 @@ public final class ClientEvents {
         WayfinderManager.get().active().ifPresent(target -> {
             // Wayfinder designates locations; it does not claim a traversable route.
             // Navigation belongs to the HUD layer, while world-space rendering stays
-            // limited to the safe approach and exact target.
+            // limited to the suggested approach and exact target.
             LevelRenderer.renderLineBox(pose, lines, new AABB(target.approach()).inflate(0.12),
                 0.25F, 1.0F, 0.35F, 1.0F);
             LevelRenderer.renderLineBox(pose, lines, new AABB(target.pos()).inflate(0.04),
