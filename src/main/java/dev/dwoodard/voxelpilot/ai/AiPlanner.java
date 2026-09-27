@@ -89,6 +89,10 @@ public final class AiPlanner {
     private AiPlanner() {}
 
     public static CompletableFuture<Outcome> plan(Minecraft mc, String userPrompt) {
+        return plan(mc, userPrompt, GameContext.capture(mc));
+    }
+
+    public static CompletableFuture<Outcome> plan(Minecraft mc, String userPrompt, GameContext gameContext) {
         ResolvedPlan existing = GhostPreviewManager.get().plan().orElse(null);
         Optional<Frame> current = Frame.current(mc);
         // A selection always decides where. If it differs from the one the current preview
@@ -102,6 +106,7 @@ public final class AiPlanner {
         if (frame.isEmpty()) return CompletableFuture.failedFuture(new PlanException("Look at a block or select an area with J first"));
 
         StringBuilder content = new StringBuilder("REQUEST: ").append(userPrompt).append('\n');
+        content.append("GAME: ").append(gameContext.promptSummary()).append('\n');
         String recent = RecentHistory.get().render();
         if (!recent.isEmpty()) content.append("\nRECENT:\n").append(recent);
         if (previous != null && !previous.plan().script.isEmpty()) {
