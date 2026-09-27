@@ -187,7 +187,7 @@ public final class CommandProcessor {
             String notes = allNotes.isEmpty() ? "" : " · " + String.join(" · ", allNotes);
             reply.accept((plan.message == null || plan.message.isBlank() ? plan.title : plan.message)
                 + " · rev " + GhostPreviewManager.get().revision() + " · " + resolved.changes().size() + " changes" + notes);
-            if (mc.player != null) mc.player.displayClientMessage(Component.literal("[VoxelPilot] Ghost preview ready · Cmd+Shift+K for details"), true);
+            if (mc.player != null) mc.player.displayClientMessage(Component.literal("[VoxelPilot] Ghost preview ready · Cmd+K for actions"), true);
         }));
     }
 
