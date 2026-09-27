@@ -71,7 +71,9 @@ public final class CommandProcessor {
         }
         if (lower.startsWith("/wayfinder ")) {
             String query = input.substring(input.indexOf(' ') + 1).trim();
-            var target = WayfinderManager.get().findNearest(mc, query);
+            var target = query.startsWith("@")
+                ? WayfinderManager.get().followReference(mc, query)
+                : WayfinderManager.get().findNearest(mc, query);
             if (target.isEmpty()) {
                 reply.accept("No known " + query + " in currently loaded chunks");
             } else {
