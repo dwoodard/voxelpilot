@@ -25,9 +25,9 @@ public final class TerrainAwarenessProvider {
             if (!mc.level.hasChunkAt(pos)) continue;
             var fluid = mc.level.getBlockState(pos).getFluidState();
             if (fluid.is(FluidTags.LAVA)) {
-                nearestLava = nearer(nearestLava, observation(Type.LAVA, pos, Severity.CAUTION, player, entry, "LAVA"));
+                nearestLava = nearer(nearestLava, observation(Type.LAVA, pos, Severity.CAUTION, player, entry, "LAVA NEAR PLAYER"));
             } else if (fluid.is(FluidTags.WATER)) {
-                nearestWater = nearer(nearestWater, observation(Type.WATER, pos, Severity.ADVISORY, player, entry, "WATER"));
+                nearestWater = nearer(nearestWater, observation(Type.WATER, pos, Severity.ADVISORY, player, entry, "WATER NEAR PLAYER"));
             }
         }
 
@@ -56,14 +56,14 @@ public final class TerrainAwarenessProvider {
         double distance = Math.sqrt(player.distSqr(pos));
         double objectiveDistance = Math.sqrt(objective.distSqr(pos));
         double relevance = severity.weight() * 100.0 + Math.max(0, 30.0 - objectiveDistance) - distance;
-        return new Observation(type, pos.immutable(), severity, distance, relevance, 1.0, "terrain", message);
+        return new Observation(type, pos.immutable(), severity, distance, relevance, Evidence.DIRECT, "terrain", message);
     }
 
     private static Observation nearer(Observation current, Observation candidate) {
         return current == null || candidate.distance() < current.distance() ? candidate : current;
     }
 
-    public enum Type { LAVA, WATER, OPEN_SPACE, DROP }
+    public enum Type { LAVA, WATER, OPEN_SPACE, DROP }\n    public enum Evidence { DIRECT, INFERRED }
     public enum Severity {
         CAUTION(0, 3), ADVISORY(1, 2), INFO(2, 1);
         private final int priority;
@@ -79,7 +79,7 @@ public final class TerrainAwarenessProvider {
         Severity severity,
         double distance,
         double relevance,
-        double confidence,
+        Evidence evidence,
         String source,
         String message
     ) {}
