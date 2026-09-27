@@ -43,8 +43,16 @@ public final class ContextualHud {
 
     private static void renderPrecision(GuiGraphics gui, Minecraft mc, AwarenessState state) {
         var pos = state.targetPosition();
-        renderPanel(gui, mc, "WAYFINDER  //  PRECISION", state.targetName().toUpperCase(),
-            "XYZ " + pos.getX() + " / " + pos.getY() + " / " + pos.getZ());
+        String coordinates = "XYZ " + pos.getX() + " / " + pos.getY() + " / " + pos.getZ();
+        int width = Math.max(mc.font.width(state.targetName().toUpperCase()), mc.font.width(coordinates));
+        int x = (gui.guiWidth() - width) / 2;
+        int y = Math.max(34, gui.guiHeight() / 2 - 38);
+
+        gui.fill(x - 9, y - 7, x + width + 9, y + 27, 0x88000000);
+        gui.drawCenteredString(mc.font, "◆  " + state.targetName().toUpperCase(),
+            gui.guiWidth() / 2, y, 0xFF70FF8A);
+        gui.drawCenteredString(mc.font, coordinates,
+            gui.guiWidth() / 2, y + 13, 0xFFFFFFFF);
     }
 
     private static void renderBearing(GuiGraphics gui, Minecraft mc, AwarenessState state) {
