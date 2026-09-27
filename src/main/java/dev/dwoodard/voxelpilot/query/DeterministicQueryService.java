@@ -2,6 +2,7 @@ package dev.dwoodard.voxelpilot.query;
 
 import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
 import net.minecraft.client.Minecraft;
+import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
 
 import java.util.stream.Collectors;
 
@@ -24,6 +25,13 @@ public final class DeterministicQueryService {
                 .collect(Collectors.joining(", "));
             return names.isBlank() ? "Players: none detected" : "Players: " + names;
         }
-        return "Unknown deterministic query. Try ?@reference or ?players";
+        if (!value.isBlank() && !value.toLowerCase().contains(" near ")) {
+            var target = WayfinderManager.get().inspectNearest(mc, value);
+            if (target.isPresent() && mc != null && mc.player != null) {
+                return WayfinderManager.get().describe(target.get(), mc.player.blockPosition());
+            }
+            return WayfinderManager.get().searchFailure(value);
+        }
+        return "Unsupported deterministic query shape. Try ?@reference, ?players, or ?diamond_ore";
     }
 }
