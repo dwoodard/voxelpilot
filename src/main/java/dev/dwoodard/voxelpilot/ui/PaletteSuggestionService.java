@@ -96,8 +96,6 @@ public final class PaletteSuggestionService {
     }
 
     private static List<Item> referenceSuggestions(Minecraft mc, String input, Token token) {
-        if (mc.getConnection() == null) return List.of();
-
         String needle = token.text().substring(1);
         return ReferenceResolver.matching(mc, needle, 8).stream()
             .map(reference -> {
