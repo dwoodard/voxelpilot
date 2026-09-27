@@ -10,6 +10,7 @@ import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import dev.dwoodard.voxelpilot.ui.CommandPaletteScreen;
 import dev.dwoodard.voxelpilot.ui.InspectorScreen;
 import dev.dwoodard.voxelpilot.ui.SettingsScreen;
+import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -156,6 +157,27 @@ public final class ClientEvents {
 
         SelectionManager.get().box().ifPresent(box ->
             LevelRenderer.renderLineBox(pose, lines, box.aabb(), 0.95F, 0.75F, 0.15F, 1.0F));
+
+        WayfinderManager.get().active().ifPresent(target -> {
+            if (mc.player == null) return;
+            Vec3 from = mc.player.position().add(0, 0.25, 0);
+            Vec3 to = Vec3.atCenterOf(target.pos());
+            Vec3 delta = to.subtract(from);
+            double length = delta.length();
+            if (length > 0.01) {
+                Vec3 step = delta.normalize().scale(3.0);
+                Vec3 marker = from.add(step);
+                int count = Math.min(128, Math.max(1, (int) Math.ceil(length / 3.0)));
+                for (int i = 0; i < count && marker.distanceToSqr(to) > 4.0; i++) {
+                    AABB guide = new AABB(marker.x - 0.18, marker.y - 0.18, marker.z - 0.18,
+                        marker.x + 0.18, marker.y + 0.18, marker.z + 0.18);
+                    LevelRenderer.renderLineBox(pose, lines, guide, 0.25F, 1.0F, 0.35F, 0.82F);
+                    marker = marker.add(step);
+                }
+            }
+            LevelRenderer.renderLineBox(pose, lines, new AABB(target.pos()).inflate(0.04),
+                0.25F, 1.0F, 0.35F, 1.0F);
+        });
 
         var changes = GhostPreviewManager.get().changes();
         int stride = changes.size() > 5000 ? Math.max(1, changes.size() / 5000) : 1;
