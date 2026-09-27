@@ -5,6 +5,7 @@ import dev.dwoodard.voxelpilot.ai.PaletteHistory;
 import dev.dwoodard.voxelpilot.build.BuildExecutor;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
+import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
@@ -27,6 +28,7 @@ public final class CommandPaletteScreen extends Screen {
     // "you" entries). -1 means "not currently browsing history".
     private int historyIndex = -1;
     private String draftBeforeHistory = "";
+    private List<WayfinderManager.Suggestion> wayfinderSuggestions = List.of();
 
     public CommandPaletteScreen() { super(Component.literal("VoxelPilot")); }
 
@@ -45,6 +47,15 @@ public final class CommandPaletteScreen extends Screen {
     }
 
     private void updateSuggestions(String query) {
+        String trimmed = query.trim();
+        if (trimmed.toLowerCase(Locale.ROOT).startsWith("/wayfinder")) {
+            String targetQuery = trimmed.length() > 10 ? trimmed.substring(10).trim() : "";
+            wayfinderSuggestions = WayfinderManager.get().suggestions(targetQuery, 6);
+            suggestions = wayfinderSuggestions.stream().map(s -> s.name() + "  ·  " + s.id()).toList();
+            return;
+        }
+
+        wayfinderSuggestions = List.of();
         List<String> items = new ArrayList<>();
         if (GhostPreviewManager.get().hasPreview()) {
             items.add("confirm preview");
@@ -62,6 +73,7 @@ public final class CommandPaletteScreen extends Screen {
             items.add("flatten this area");
             items.add("clear selection");
         } else {
+            items.add("/wayfinder diamond");
             items.add("build something where I'm looking");
             items.add("finish this structure");
             items.add("move me somewhere with a better view");
@@ -79,6 +91,12 @@ public final class CommandPaletteScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if ((keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN) && !wayfinderSuggestions.isEmpty()) {
+            selected = keyCode == GLFW.GLFW_KEY_UP
+                ? (selected - 1 + suggestions.size()) % suggestions.size()
+                : (selected + 1) % suggestions.size();
+            return true;
+        }
         if (keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN) {
             List<String> pastCommands = PaletteHistory.get().entries().stream()
                 .filter(e -> "you".equals(e.who())).map(PaletteHistory.Entry::text).toList();
@@ -110,7 +128,9 @@ public final class CommandPaletteScreen extends Screen {
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_TAB && !suggestions.isEmpty()) {
-            input.setValue(suggestions.get(selected));
+            input.setValue(wayfinderSuggestions.isEmpty()
+                ? suggestions.get(selected)
+                : "/wayfinder " + wayfinderSuggestions.get(selected).id());
             input.setCursorPosition(input.getValue().length());
             return true;
         }
@@ -124,7 +144,9 @@ public final class CommandPaletteScreen extends Screen {
         }
         if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
             String command = input.getValue().trim();
-            if (command.isEmpty() && !suggestions.isEmpty()) command = suggestions.get(selected);
+            if (!wayfinderSuggestions.isEmpty() && selected < wayfinderSuggestions.size()) {
+                command = "/wayfinder " + wayfinderSuggestions.get(selected).id();
+            } else if (command.isEmpty() && !suggestions.isEmpty()) command = suggestions.get(selected);
             if (!command.isEmpty()) {
                 String finalCommand = command;
                 status = "Working…";
