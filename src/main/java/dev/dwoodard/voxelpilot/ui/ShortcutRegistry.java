@@ -13,6 +13,7 @@ public final class ShortcutRegistry {
     public record Shortcut(String keys, String label, int key, boolean shift, String command) {}
 
     private static final List<Shortcut> SHORTCUTS = List.of(
+        new Shortcut("Cmd+N", "Find Next", GLFW.GLFW_KEY_N, false, "/wayfinder next"),
         new Shortcut("Cmd+Z", "Undo last build", GLFW.GLFW_KEY_Z, false, "undo build"),
         new Shortcut("Cmd+Shift+Enter", "Confirm preview", GLFW.GLFW_KEY_ENTER, true, "confirm preview")
     );
@@ -21,6 +22,12 @@ public final class ShortcutRegistry {
 
     public static List<Shortcut> all() {
         return SHORTCUTS;
+    }
+
+    public static java.util.Optional<Shortcut> match(int key, boolean shift) {
+        return SHORTCUTS.stream()
+            .filter(shortcut -> shortcut.key() == key && shortcut.shift() == shift)
+            .findFirst();
     }
 
     public static String displayText() {
