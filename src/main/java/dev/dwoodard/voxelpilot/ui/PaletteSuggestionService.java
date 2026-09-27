@@ -88,11 +88,7 @@ public final class PaletteSuggestionService {
         if ("/shortcuts".startsWith(lower)) {
             items.add(new Item("/shortcuts", "/shortcuts  ·  keyboard shortcuts", Source.VOXELPILOT));
         }
-        if ("/wayfinder next".startsWith(lower)) {
-            items.add(new Item("/wayfinder next", "/wayfinder next  ·  next search result", Source.VOXELPILOT));
-        }
-        if (!lower.startsWith("/wayfinder next")
-            && ("/wayfinder".startsWith(lower) || lower.startsWith("/wayfinder"))) {
+        if ("/wayfinder".startsWith(lower) || lower.startsWith("/wayfinder")) {
             if (lower.startsWith("/wayfinder")) {
                 String query = input.length() > 10 ? input.substring(10).trim() : "";
                 for (WayfinderManager.Suggestion suggestion : WayfinderManager.get().suggestions(query, 8)) {
@@ -102,6 +98,9 @@ public final class PaletteSuggestionService {
             } else {
                 items.add(new Item("/wayfinder", "/wayfinder", Source.VOXELPILOT));
             }
+        }
+        if ("/wayfinder next".startsWith(lower)) {
+            items.add(new Item("/wayfinder next", "/wayfinder next  ·  next search result", Source.VOXELPILOT));
         }
         return items;
     }
