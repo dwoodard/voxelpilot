@@ -70,6 +70,18 @@ public final class CommandPaletteScreen extends Screen {
                 : (selected + 1) % suggestions.size();
             return true;
         }
+        boolean commandModifier = (modifiers & (GLFW.GLFW_MOD_SUPER | GLFW.GLFW_MOD_CONTROL)) != 0;
+        boolean shiftModifier = (modifiers & GLFW.GLFW_MOD_SHIFT) != 0;
+        if (commandModifier) {
+            var shortcut = ShortcutRegistry.match(keyCode, shiftModifier);
+            if (shortcut.isPresent()
+                && !(shortcut.get().key() == GLFW.GLFW_KEY_ENTER && shortcut.get().shift())) {
+                status = "Working…";
+                CommandProcessor.run(Minecraft.getInstance(), shortcut.get().command(), value -> status = value);
+                return true;
+            }
+        }
+
         if (keyCode == GLFW.GLFW_KEY_L && (modifiers & (GLFW.GLFW_MOD_SUPER | GLFW.GLFW_MOD_CONTROL)) != 0) {
             // Same as cls: ghost, chat, and AI history.
             dev.dwoodard.voxelpilot.build.GhostPreviewManager.get().clear();
