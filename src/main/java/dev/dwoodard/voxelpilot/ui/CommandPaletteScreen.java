@@ -63,10 +63,10 @@ public final class CommandPaletteScreen extends Screen {
             items.add("move me somewhere I can see the whole build");
             items.add("cancel preview");
         } else if (BuildExecutor.get().active()) {
-            items.add(BuildExecutor.get().paused() ? "resume" : "pause");
+            items.add(BuildExecutor.get().paused() ? "resume build" : "pause build");
             items.add("speed fast");
             items.add("speed normal");
-            items.add("cancel");
+            items.add("cancel preview");
         } else if (SelectionManager.get().box().isPresent()) {
             items.add("build a medieval barn in this area");
             items.add("analyze this area before building");
@@ -77,7 +77,7 @@ public final class CommandPaletteScreen extends Screen {
             items.add("build something where I'm looking");
             items.add("finish this structure");
             items.add("move me somewhere with a better view");
-            items.add("undo");
+            items.add("undo build");
         }
         items.add("speed slow");
         items.add("speed normal");
