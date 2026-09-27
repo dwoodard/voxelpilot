@@ -23,6 +23,7 @@ public final class CommandPaletteScreen extends Screen {
     private String status = "Type what you want VoxelPilot to do";
     private List<PaletteSuggestionService.Item> suggestions = List.of();
     private int selected;
+    private String actionReference;
 
     public CommandPaletteScreen() { super(Component.literal("VoxelPilot")); }
 
@@ -53,22 +54,46 @@ public final class CommandPaletteScreen extends Screen {
         PaletteHistory.get().addAssistant(status);
     }
 
-    private void toggleSelectedReferencePin() {
-        Minecraft mc = Minecraft.getInstance();
-        String token = null;
-
+    private String selectedReferenceToken() {
+        if (actionReference != null) return actionReference;
         if (!suggestions.isEmpty()) {
             var item = suggestions.get(Math.min(selected, suggestions.size() - 1));
             if (item.source() == PaletteSuggestionService.Source.REFERENCE) {
                 String[] parts = item.label().split("\\s+");
-                if (parts.length > 0 && parts[0].startsWith("@")) token = parts[0];
+                if (parts.length > 0 && parts[0].startsWith("@")) return parts[0];
             }
         }
+        String value = input.getValue().trim();
+        if (value.startsWith("@") && !value.contains(" ")) return value;
+        return null;
+    }
 
-        if (token == null) {
-            String value = input.getValue().trim();
-            if (value.startsWith("@") && !value.contains(" ")) token = value;
-        }
+    private void openReferenceActions() {
+        String token = selectedReferenceToken();
+        if (token == null) { status = "Select an @reference first"; return; }
+        var reference = ReferenceResolver.resolve(Minecraft.getInstance(), token.substring(1));
+        if (reference.isEmpty()) { status = token + " is unknown"; return; }
+        actionReference = reference.get().token();
+        selected = 0;
+        boolean pinned = ReferencePins.get().isPinned(actionReference);
+        suggestions = List.of(
+            new PaletteSuggestionService.Item("/wayfinder " + actionReference, "Wayfind " + actionReference, PaletteSuggestionService.Source.VOXELPILOT),
+            new PaletteSuggestionService.Item((pinned ? "/unpin " : "/pin ") + actionReference,
+                (pinned ? "Unpin " : "Pin ") + actionReference, PaletteSuggestionService.Source.VOXELPILOT),
+            new PaletteSuggestionService.Item(actionReference, "Inspect " + actionReference, PaletteSuggestionService.Source.VOXELPILOT)
+        );
+        status = reference.get().paletteLabel();
+    }
+
+    private void runReferenceAction(String command) {
+        status = "Working…";
+        CommandProcessor.run(Minecraft.getInstance(), command, value -> status = value);
+        actionReference = null;
+    }
+
+    private void toggleSelectedReferencePin() {
+        Minecraft mc = Minecraft.getInstance();
+        String token = selectedReferenceToken();
 
         if (token == null) {
             status = "Cmd+P requires a selected @reference";
@@ -121,6 +146,18 @@ public final class CommandPaletteScreen extends Screen {
                     toggleSelectedReferencePin();
                     return true;
                 }
+                if (shortcut.get().key() == GLFW.GLFW_KEY_G) {
+                    String token = selectedReferenceToken();
+                    if (token == null) status = "Cmd+G requires a selected @reference";
+                    else runReferenceAction("/wayfinder " + token);
+                    return true;
+                }
+                if (shortcut.get().key() == GLFW.GLFW_KEY_I) {
+                    String token = selectedReferenceToken();
+                    if (token == null) status = "Cmd+I requires a selected @reference";
+                    else runReferenceAction(token);
+                    return true;
+                }
                 status = "Working…";
                 CommandProcessor.run(Minecraft.getInstance(), shortcut.get().command(), value -> status = value);
                 return true;
@@ -147,6 +184,10 @@ public final class CommandPaletteScreen extends Screen {
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+            if (actionReference != null && !suggestions.isEmpty()) {
+                runReferenceAction(suggestions.get(Math.min(selected, suggestions.size() - 1)).value());
+                return true;
+            }
             String command = input.getValue().trim();
             if (command.isEmpty() && !suggestions.isEmpty()) command = suggestions.get(selected).value();
 
@@ -170,19 +211,17 @@ public final class CommandPaletteScreen extends Screen {
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_RIGHT && !suggestions.isEmpty()) {
-            PaletteSuggestionService.Item item = suggestions.get(Math.min(selected, suggestions.size() - 1));
-            if (item.source() == PaletteSuggestionService.Source.REFERENCE) {
-                String token = item.label().split("\\s")[0];
-                input.setValue("/wayfinder " + token);
-                input.setCursorPosition(input.getValue().length());
+            if (suggestions.get(Math.min(selected, suggestions.size() - 1)).source() == PaletteSuggestionService.Source.REFERENCE) {
+                openReferenceActions();
                 return true;
             }
         }
-        if (keyCode == GLFW.GLFW_KEY_LEFT) {
-            if (!input.getValue().isBlank()) {
-                input.setValue("");
-                return true;
-            }
+        if (keyCode == GLFW.GLFW_KEY_LEFT && actionReference != null) {
+            actionReference = null;
+            selected = 0;
+            updateSuggestions(input.getValue());
+            status = "Type what you want VoxelPilot to do";
+            return true;
         }
         boolean handled = super.keyPressed(keyCode, scanCode, modifiers);
         if (handled && input != null) updateSuggestions(input.getValue());
