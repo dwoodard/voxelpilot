@@ -26,6 +26,7 @@ public final class ContextualHud {
             case APPROACH -> renderApproach(gui, mc, state);
             case PRECISION -> renderPrecision(gui, mc, state);
         }
+        renderHighestPriorityObservation(gui, mc, state);
     }
 
     private static void renderNavigation(GuiGraphics gui, Minecraft mc, AwarenessState state) {
@@ -63,6 +64,17 @@ public final class ContextualHud {
         gui.drawString(mc.font, title, margin, bottom, 0xFF70FF8A, false);
         gui.drawString(mc.font, target, margin, bottom + 11, 0xFFFFFFFF, false);
         gui.drawString(mc.font, detail, margin, bottom + 22, 0xFFB8C0C8, false);
+    }
+
+    private static void renderHighestPriorityObservation(GuiGraphics gui, Minecraft mc, AwarenessState state) {
+        if (state.observations().isEmpty()) return;
+        var observation = state.observations().get(0);
+        String line = observation.severity() + "  //  " + observation.message();
+        int width = mc.font.width(line);
+        int x = gui.guiWidth() - width - 12;
+        int y = gui.guiHeight() - 20;
+        gui.fill(x - 6, y - 4, gui.guiWidth() - 6, y + 12, 0x88000000);
+        gui.drawString(mc.font, line, x, y, 0xFFFFD36A, false);
     }
 
     private static String verticalLabel(int vertical) {
