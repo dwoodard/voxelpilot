@@ -9,6 +9,7 @@ import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
 import dev.dwoodard.voxelpilot.reference.ReferenceStore;
 import dev.dwoodard.voxelpilot.reference.ReferencePins;
+import dev.dwoodard.voxelpilot.query.DeterministicQueryService;
 import dev.dwoodard.voxelpilot.selection.StructureSelector;
 import dev.dwoodard.voxelpilot.ui.SettingsScreen;
 import dev.dwoodard.voxelpilot.ui.ShortcutRegistry;
@@ -49,6 +50,11 @@ public final class CommandProcessor {
 
         if (lower.equals("/shortcuts") || lower.equals("/keys")) {
             reply.accept(ShortcutRegistry.displayText());
+            return;
+        }
+
+        if (input.startsWith("?")) {
+            reply.accept(DeterministicQueryService.query(mc, input.substring(1)));
             return;
         }
 
