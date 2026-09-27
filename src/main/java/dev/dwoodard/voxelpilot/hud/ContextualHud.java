@@ -22,32 +22,21 @@ public final class ContextualHud {
         switch (state.phase()) {
             case NAVIGATING -> renderNavigation(gui, mc, state);
             case APPROACHING_ENTRY -> renderApproach(gui, mc, state);
-            case TARGETING -> renderPrecision(gui, mc, state);
-            case REACHED, TARGET_LOST -> renderBearing(gui, mc, state, true, true);
+            case TARGETING -> renderBearing(gui, mc, state, true, false, true);
+            case REACHED, TARGET_LOST -> renderBearing(gui, mc, state, true, true, false);
         }
         renderHighestPriorityObservation(gui, mc, state);
     }
 
     private static void renderNavigation(GuiGraphics gui, Minecraft mc, AwarenessState state) {
-        renderBearing(gui, mc, state, false, false);
+        renderBearing(gui, mc, state, false, false, false);
     }
 
     private static void renderApproach(GuiGraphics gui, Minecraft mc, AwarenessState state) {
-        renderBearing(gui, mc, state, true, false);
+        renderBearing(gui, mc, state, true, false, false);
     }
 
-    private static void renderPrecision(GuiGraphics gui, Minecraft mc, AwarenessState state) {
-        var pos = state.targetPosition();
-        String coordinates = "XYZ " + pos.getX() + " / " + pos.getY() + " / " + pos.getZ();
-        int width = Math.max(mc.font.width(state.targetName().toUpperCase()), mc.font.width(coordinates));
-        int x = (gui.guiWidth() - width) / 2;
-        int y = Math.max(34, gui.guiHeight() / 2 - 38);
-        gui.fill(x - 9, y - 7, x + width + 9, y + 27, 0x88000000);
-        gui.drawCenteredString(mc.font, "◆  " + state.targetName().toUpperCase(), gui.guiWidth() / 2, y, 0xFF70FF8A);
-        gui.drawCenteredString(mc.font, coordinates, gui.guiWidth() / 2, y + 13, 0xFFFFFFFF);
-    }
-
-    private static void renderBearing(GuiGraphics gui, Minecraft mc, AwarenessState state, boolean approaching, boolean isReached) {
+    private static void renderBearing(GuiGraphics gui, Minecraft mc, AwarenessState state, boolean approaching, boolean isReached, boolean isTargeting) {
         double relative = state.relativeBearing();
         String arrow = Math.abs(relative) <= 8 ? "◆" : relative < 0 ? "◀" : "▶";
 
@@ -58,8 +47,10 @@ public final class ContextualHud {
         int dz = (int) Math.round(pos.getZ() - mc.player.getZ());
         String detail = "Δ " + String.format("%3d/%3d/%3d", dx, dy, dz);
 
-        // Always reserve space for checkmark (no jumping)
-        detail += isReached ? "  ✔" : "   ";
+        // Always reserve space for status icon (no jumping)
+        if (isReached) detail += "  ✔";
+        else if (isTargeting) detail += "  ◉";
+        else detail += "   ";
 
         String line = arrow + " " + state.targetName().toUpperCase() + "  " + detail;
         int width = mc.font.width(line);
