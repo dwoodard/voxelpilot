@@ -51,7 +51,7 @@ public final class ReferenceResolver {
             return Optional.of(new ResolvedReference(
                 "@" + value.name(), "PLACE", value.name(), false,
                 value.dimension(), value.position().getX(), value.position().getY(), value.position().getZ(),
-                distance, "DIRECT"
+                distance, EvidenceState.DIRECT, ObservationState.PRESENT, value.observedAt()
             ));
         }
 
@@ -69,7 +69,7 @@ public final class ReferenceResolver {
         if (entity == null) {
             return Optional.of(new ResolvedReference(
                 "@" + canonicalName, "PLAYER", canonicalName, true,
-                null, null, null, null, null, "DIRECT"
+                null, null, null, null, null, EvidenceState.DIRECT, ObservationState.UNKNOWN, System.currentTimeMillis()
             ));
         }
 
@@ -82,7 +82,8 @@ public final class ReferenceResolver {
 
         return Optional.of(new ResolvedReference(
             "@" + canonicalName, "PLAYER", canonicalName, true,
-            dimension, pos.getX(), pos.getY(), pos.getZ(), distance, "DIRECT"
+            dimension, pos.getX(), pos.getY(), pos.getZ(), distance,
+            EvidenceState.DIRECT, ObservationState.PRESENT, System.currentTimeMillis()
         ));
     }
 
@@ -119,7 +120,9 @@ public final class ReferenceResolver {
         Integer y,
         Integer z,
         Double distance,
-        String evidence
+        EvidenceState evidence,
+        ObservationState observation,
+        long observedAt
     ) {
         public boolean hasPosition() {
             return dimension != null && x != null && y != null && z != null;
@@ -165,7 +168,9 @@ public final class ReferenceResolver {
             } else {
                 out.append("  position: UNKNOWN\n");
             }
-            out.append("  evidence: ").append(evidence);
+            out.append("  evidence: ").append(evidence).append("\n")
+                .append("  observation: ").append(observation).append("\n")
+                .append("  observed_at: ").append(observedAt);
             return out.toString();
         }
     }
