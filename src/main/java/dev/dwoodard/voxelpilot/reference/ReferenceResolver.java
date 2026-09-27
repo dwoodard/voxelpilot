@@ -40,6 +40,21 @@ public final class ReferenceResolver {
     public static Optional<ResolvedReference> resolve(Minecraft mc, String name) {
         if (mc == null || mc.getConnection() == null || name == null || name.isBlank()) return Optional.empty();
 
+        var place = ReferenceStore.get().find(name);
+        if (place.isPresent()) {
+            var value = place.get();
+            Double distance = null;
+            if (mc.player != null && mc.level != null
+                && mc.level.dimension().location().toString().equals(value.dimension())) {
+                distance = Math.sqrt(mc.player.blockPosition().distSqr(value.position()));
+            }
+            return Optional.of(new ResolvedReference(
+                "@" + value.name(), "PLACE", value.name(), false,
+                value.dimension(), value.position().getX(), value.position().getY(), value.position().getZ(),
+                distance, "DIRECT"
+            ));
+        }
+
         PlayerInfo info = mc.getConnection().getOnlinePlayers().stream()
             .filter(candidate -> candidate.getProfile().getName().equalsIgnoreCase(name))
             .findFirst()
@@ -67,6 +82,15 @@ public final class ReferenceResolver {
             "@" + canonicalName, "PLAYER", canonicalName, true,
             dimension, pos.getX(), pos.getY(), pos.getZ(), distance, "DIRECT"
         ));
+    }
+
+    public static List<ResolvedReference> matching(Minecraft mc, String needle, int limit) {
+        List<ResolvedReference> all = new ArrayList<>();
+        for (var place : ReferenceStore.get().matching(needle, limit)) {
+            resolve(mc, place.name()).ifPresent(all::add);
+        }
+        if (all.size() < limit) all.addAll(matchingPlayers(mc, needle, limit - all.size()));
+        return all.stream().limit(limit).toList();
     }
 
     public static List<ResolvedReference> matchingPlayers(Minecraft mc, String needle, int limit) {
@@ -103,8 +127,23 @@ public final class ReferenceResolver {
             StringBuilder out = new StringBuilder(token).append("  ·  ").append(type);
             if (online) out.append(" · online");
             if (distance != null) out.append(" · ").append(Math.round(distance)).append("m");
+            if (hasPosition() && distance != null) {
+                String bearing = bearing();
+                if (!bearing.isBlank()) out.append(" · ").append(bearing);
+            }
             else if (!hasPosition()) out.append(" · position unknown");
             return out.toString();
+        }
+
+        public String bearing() {
+            Minecraft mc = Minecraft.getInstance();
+            if (!hasPosition() || mc.player == null || mc.level == null
+                || !mc.level.dimension().location().toString().equals(dimension)) return "";
+            double dx = x - mc.player.getX();
+            double dz = z - mc.player.getZ();
+            double degrees = (Math.toDegrees(Math.atan2(-dx, dz)) + 360.0) % 360.0;
+            String[] directions = {"S", "SW", "W", "NW", "N", "NE", "E", "SE"};
+            return directions[(int) Math.round(degrees / 45.0) % 8];
         }
 
         public String promptContext() {
@@ -116,7 +155,11 @@ public final class ReferenceResolver {
             if (hasPosition()) {
                 out.append("  dimension: ").append(dimension).append("\n")
                     .append("  position: [").append(x).append(", ").append(y).append(", ").append(z).append("]\n");
-                if (distance != null) out.append("  distance_from_player: ").append(Math.round(distance)).append("\n");
+                if (distance != null) {
+                    out.append("  distance_from_player: ").append(Math.round(distance)).append("\n");
+                    String bearing = bearing();
+                    if (!bearing.isBlank()) out.append("  bearing: ").append(bearing).append("\n");
+                }
             } else {
                 out.append("  position: UNKNOWN\n");
             }
