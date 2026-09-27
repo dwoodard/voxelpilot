@@ -38,7 +38,7 @@ public final class ReferenceResolver {
     }
 
     public static Optional<ResolvedReference> resolve(Minecraft mc, String name) {
-        if (mc == null || mc.getConnection() == null || name == null || name.isBlank()) return Optional.empty();
+        if (mc == null || name == null || name.isBlank()) return Optional.empty();
 
         var place = ReferenceStore.get().find(name);
         if (place.isPresent()) {
@@ -54,6 +54,8 @@ public final class ReferenceResolver {
                 distance, "DIRECT"
             ));
         }
+
+        if (mc.getConnection() == null) return Optional.empty();
 
         PlayerInfo info = mc.getConnection().getOnlinePlayers().stream()
             .filter(candidate -> candidate.getProfile().getName().equalsIgnoreCase(name))
