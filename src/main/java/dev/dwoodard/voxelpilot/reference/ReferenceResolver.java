@@ -81,7 +81,7 @@ public final class ReferenceResolver {
         }
 
         return Optional.of(new ResolvedReference(
-            "@" + canonicalName, "PLAYER", canonicalName, true,
+            "@" + canonicalName, ReferenceType.PLAYER, canonicalName, true,
             dimension, pos.getX(), pos.getY(), pos.getZ(), distance,
             EvidenceState.DIRECT, ObservationState.PRESENT, System.currentTimeMillis()
         ));
