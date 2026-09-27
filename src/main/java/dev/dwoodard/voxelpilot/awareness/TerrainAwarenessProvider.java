@@ -63,7 +63,8 @@ public final class TerrainAwarenessProvider {
         return current == null || candidate.distance() < current.distance() ? candidate : current;
     }
 
-    public enum Type { LAVA, WATER, OPEN_SPACE, DROP }\n    public enum Evidence { DIRECT, INFERRED }
+    public enum Type { LAVA, WATER, OPEN_SPACE, DROP }
+    public enum Evidence { DIRECT, INFERRED }
     public enum Severity {
         CAUTION(0, 3), ADVISORY(1, 2), INFO(2, 1);
         private final int priority;

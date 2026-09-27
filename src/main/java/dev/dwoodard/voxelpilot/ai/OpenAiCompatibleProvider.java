@@ -73,6 +73,21 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
         }
         body.add("messages", messagesJson);
 
+        // TODO: Tools disabled until agentic loop is implemented in AiPlanner.
+        // Sending tools without handling tool_calls causes empty responses.
+        // JsonArray tools = new JsonArray();
+        // for (ToolDefinition tool : ToolDefinition.all()) {
+        //     JsonObject toolDef = new JsonObject();
+        //     toolDef.addProperty("type", "function");
+        //     JsonObject function = new JsonObject();
+        //     function.addProperty("name", tool.name());
+        //     function.addProperty("description", tool.description());
+        //     function.add("parameters", tool.parameters());
+        //     toolDef.add("function", function);
+        //     tools.add(toolDef);
+        // }
+        // body.add("tools", tools);
+
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri("/chat/completions"))
             .header("Content-Type", "application/json")
             .header("Accept", "text/event-stream")
@@ -116,6 +131,11 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
             }
             splitter.flush();
             if ("length".equals(finish)) throw PlanJson.truncated();
+
+            // For now, if model returned tool_calls, log them (full agentic loop to follow)
+            // Check the response for tool calls by examining if we have any in accumulation
+            // (This will be enhanced when we implement full tool execution loop)
+
             if (splitter.text().isBlank()) {
                 throw new IllegalStateException(sawReasoning
                     ? "Model only produced reasoning and no answer; try a non-thinking model"

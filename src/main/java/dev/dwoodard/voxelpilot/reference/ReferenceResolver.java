@@ -77,7 +77,7 @@ public final class ReferenceResolver {
         var pos = entity.blockPosition();
         Double distance = null;
         if (mc.player != null && mc.player.level().dimension().equals(entity.level().dimension())) {
-            distance = mc.player.distanceTo(entity);
+            distance = (double) mc.player.distanceTo(entity);
         }
 
         return Optional.of(new ResolvedReference(

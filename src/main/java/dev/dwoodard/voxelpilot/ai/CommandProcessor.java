@@ -137,7 +137,9 @@ public final class CommandProcessor {
         }
 
         switch (lower) {
-            // World mutation requires explicit preview confirmation. Conversational text such as\n            // "yes", "go", or "do it" belongs to AI rather than acting as authorization.\n            case "confirm", "confirm preview" -> {
+            // World mutation requires explicit preview confirmation. Conversational text such as
+            // "yes", "go", or "do it" belongs to AI rather than acting as authorization.
+            case "confirm", "confirm preview" -> {
                 BuildExecutor.get().confirm(mc).whenComplete((result, error) -> mc.execute(() -> {
                     if (error == null && result.ok()) RecentHistory.get().mark("confirmed");
                     else RecentHistory.get().mark("confirm failed: " + (error != null ? rootMessage(error) : result.message()));
@@ -212,6 +214,23 @@ public final class CommandProcessor {
             BuildSpeed speed = BuildSpeed.parse(lower.substring(6));
             BuildExecutor.get().setSpeed(speed);
             reply.accept("Build speed: " + speed.name().toLowerCase());
+            return;
+        }
+
+        // Natural language search queries should use Wayfinder, not the AI model.
+        // The AI model wastes tokens thinking about building when asked "find closest X".
+        var search = java.util.regex.Pattern.compile("(?:find|locate|search for|where is) (?:the |closest |nearest )?(\\S+)").matcher(lower);
+        if (search.matches()) {
+            String query = search.group(1);
+            var target = WayfinderManager.get().findNearest(mc, query);
+            if (target.isEmpty()) {
+                reply.accept(WayfinderManager.get().searchFailure(query));
+            } else {
+                reply.accept(WayfinderManager.get().describe(target.get(), mc.player.blockPosition()));
+                mc.setScreen(null);
+                if (mc.player != null) mc.player.displayClientMessage(
+                    Component.literal("[VoxelPilot] Wayfinding to " + target.get().name()), true);
+            }
             return;
         }
 

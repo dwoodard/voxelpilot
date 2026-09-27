@@ -128,11 +128,23 @@ public final class PaletteSuggestionService {
     private static int score(Item item, String input) {
         String lower = input.toLowerCase(Locale.ROOT);
         String value = item.value().toLowerCase(Locale.ROOT);
-        int score = CommandUsageStore.get().score(item.value());
-        if (value.equals(lower)) score += 100_000;
-        else if (value.startsWith(lower)) score += 50_000;
+        int score = 0;
+        if (value.equals(lower)) score += 1_000_000;
+        else if (value.startsWith(lower)) score += 500_000;
+        else if (fuzzyMatches(value, lower)) score += 100_000;
+        else score += CommandUsageStore.get().score(item.value());
         if (item.source() == Source.SERVER) score += 1_000;
         return score;
+    }
+
+    private static boolean fuzzyMatches(String text, String pattern) {
+        int patternIdx = 0;
+        for (int textIdx = 0; patternIdx < pattern.length() && textIdx < text.length(); textIdx++) {
+            if (pattern.charAt(patternIdx) == text.charAt(textIdx)) {
+                patternIdx++;
+            }
+        }
+        return patternIdx == pattern.length();
     }
 
     private static Token activeToken(String input, int cursor) {

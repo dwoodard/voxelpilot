@@ -23,17 +23,17 @@ public final class ContextualHud {
             case NAVIGATING -> renderNavigation(gui, mc, state);
             case APPROACHING_ENTRY -> renderApproach(gui, mc, state);
             case TARGETING -> renderPrecision(gui, mc, state);
-            case REACHED, TARGET_LOST -> renderReached(gui, mc, state);
+            case REACHED, TARGET_LOST -> renderBearing(gui, mc, state, true, true);
         }
         renderHighestPriorityObservation(gui, mc, state);
     }
 
     private static void renderNavigation(GuiGraphics gui, Minecraft mc, AwarenessState state) {
-        renderBearing(gui, mc, state, false);
+        renderBearing(gui, mc, state, false, false);
     }
 
     private static void renderApproach(GuiGraphics gui, Minecraft mc, AwarenessState state) {
-        renderBearing(gui, mc, state, true);
+        renderBearing(gui, mc, state, true, false);
     }
 
     private static void renderPrecision(GuiGraphics gui, Minecraft mc, AwarenessState state) {
@@ -47,26 +47,56 @@ public final class ContextualHud {
         gui.drawCenteredString(mc.font, coordinates, gui.guiWidth() / 2, y + 13, 0xFFFFFFFF);
     }
 
-    private static void renderReached(GuiGraphics gui, Minecraft mc, AwarenessState state) {
-        String detail = state.targetObservation() == dev.dwoodard.voxelpilot.reference.ObservationState.NO_LONGER_PRESENT
-            ? "NO LONGER PRESENT · Cmd+N Find Next"
-            : "REACHED";
-        String line = "◆ " + state.targetName().toUpperCase() + " · " + detail;
-        graphics.drawCenteredString(mc.font, line, gui.guiWidth() / 2, 10, 0xFF70FF8A);
-    }
-
-    private static void renderBearing(GuiGraphics gui, Minecraft mc, AwarenessState state, boolean approaching) {
+    private static void renderBearing(GuiGraphics gui, Minecraft mc, AwarenessState state, boolean approaching, boolean isReached) {
         double relative = state.relativeBearing();
         String arrow = Math.abs(relative) <= 8 ? "◆" : relative < 0 ? "◀" : "▶";
-        String detail = approaching
-            ? Math.round(state.approachDistance()) + "m entry"
-            : Math.round(state.horizontalDistance()) + "m";
+
+        // Always use delta for consistent fixed positioning
+        var pos = state.targetPosition();
+        int dx = (int) Math.round(pos.getX() - mc.player.getX());
+        int dy = (int) Math.round(pos.getY() - mc.player.getY());
+        int dz = (int) Math.round(pos.getZ() - mc.player.getZ());
+        String detail = "Δ " + String.format("%3d/%3d/%3d", dx, dy, dz);
+
+        // Always reserve space for checkmark (no jumping)
+        detail += isReached ? "  ✔" : "   ";
+
         String line = arrow + " " + state.targetName().toUpperCase() + "  " + detail;
         int width = mc.font.width(line);
-        int x = (gui.guiWidth() - width) / 2;
+        // Fixed position (top right, with padding)
+        int x = gui.guiWidth() - width - 10;
+        int y = 10;
 
-        // Active navigation gets one strong cue. No second panel repeating target/distance.
-        gui.drawString(mc.font, line, x, 10, 0xFF70FF8A, true);
+        gui.fill(x - 4, y - 2, x + width + 4, y + 12, 0x88000000);
+        gui.drawString(mc.font, line, x, y, 0xFF70FF8A, false);
+
+        renderBearingCrosshair(gui, mc, state);
+    }
+
+    private static void renderBearingCrosshair(GuiGraphics gui, Minecraft mc, AwarenessState state) {
+        double relative = state.relativeBearing();
+        int centerX = gui.guiWidth() / 2;
+        int centerY = gui.guiHeight() / 2;
+
+        // Draw directional marker around center based on bearing
+        int markerDistance = 24;
+        if (Math.abs(relative) <= 22.5) {
+            // Target straight ahead or nearly ahead
+            drawDirectionalMarker(gui, centerX, centerY - markerDistance, "▲", 0xFF70FF8A);
+        } else if (relative < -22.5 && relative >= -112.5) {
+            // Target to the left
+            drawDirectionalMarker(gui, centerX - markerDistance, centerY, "◀", 0xFF70FF8A);
+        } else if (relative > 22.5 && relative <= 112.5) {
+            // Target to the right
+            drawDirectionalMarker(gui, centerX + markerDistance, centerY, "▶", 0xFF70FF8A);
+        } else {
+            // Target behind
+            drawDirectionalMarker(gui, centerX, centerY + markerDistance, "▼", 0xFF70FF8A);
+        }
+    }
+
+    private static void drawDirectionalMarker(GuiGraphics gui, int x, int y, String symbol, int color) {
+        gui.drawCenteredString(Minecraft.getInstance().font, symbol, x, y - 4, color);
     }
 
     private static void renderHighestPriorityObservation(GuiGraphics gui, Minecraft mc, AwarenessState state) {

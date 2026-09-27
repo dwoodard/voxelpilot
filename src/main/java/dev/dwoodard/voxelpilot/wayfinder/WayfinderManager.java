@@ -6,6 +6,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -89,6 +91,29 @@ public final class WayfinderManager {
     private Optional<Target> findSearchTarget(Minecraft mc, String query, Set<BlockPos> excluded, boolean activate) {
         if (mc.player == null || mc.level == null) return Optional.empty();
 
+        BlockPos player = mc.player.blockPosition();
+        int playerChunkX = player.getX() >> 4;
+        int playerChunkZ = player.getZ() >> 4;
+
+        Optional<Target> blockTarget = findBlockTarget(mc, query, excluded, playerChunkX, playerChunkZ);
+        Optional<Target> entityTarget = findEntityTarget(mc, query, playerChunkX, playerChunkZ);
+
+        Optional<Target> best = Optional.empty();
+        if (blockTarget.isPresent() && entityTarget.isPresent()) {
+            best = blockTarget.get().distance() <= entityTarget.get().distance() ? blockTarget : entityTarget;
+        } else if (blockTarget.isPresent()) {
+            best = blockTarget;
+        } else if (entityTarget.isPresent()) {
+            best = entityTarget;
+        }
+
+        if (best.isPresent() && activate) active = best.get();
+        return best;
+    }
+
+    private Optional<Target> findBlockTarget(Minecraft mc, String query, Set<BlockPos> excluded, int playerChunkX, int playerChunkZ) {
+        if (mc.player == null || mc.level == null) return Optional.empty();
+
         List<Suggestion> matches = suggestions(query, 12);
         if (matches.isEmpty()) return Optional.empty();
 
@@ -97,9 +122,6 @@ public final class WayfinderManager {
         BlockPos player = mc.player.blockPosition();
         BlockPos best = null;
         double bestDistance = Double.MAX_VALUE;
-
-        int playerChunkX = player.getX() >> 4;
-        int playerChunkZ = player.getZ() >> 4;
         int loadedChunks = 0;
 
         for (int cx = playerChunkX - SEARCH_CHUNK_RADIUS; cx <= playerChunkX + SEARCH_CHUNK_RADIUS; cx++) {
@@ -142,7 +164,49 @@ public final class WayfinderManager {
         BlockPos approach = approachPosition(mc, best);
         Target target = new Target(TargetKind.SEARCH, query, displayName(wanted), wantedId,
             mc.level.dimension().location().toString(), best.immutable(), approach, Math.sqrt(bestDistance));
-        if (activate) active = target;
+        return Optional.of(target);
+    }
+
+    private Optional<Target> findEntityTarget(Minecraft mc, String query, int playerChunkX, int playerChunkZ) {
+        if (mc.player == null || mc.level == null) return Optional.empty();
+
+        String needle = normalize(query);
+        if (needle.isBlank()) return Optional.empty();
+
+        Entity best = null;
+        double bestDistance = Double.MAX_VALUE;
+        BlockPos player = mc.player.blockPosition();
+
+        for (Entity entity : mc.level.entitiesForRendering()) {
+            if (entity == mc.player) continue;
+
+            int cx = entity.blockPosition().getX() >> 4;
+            int cz = entity.blockPosition().getZ() >> 4;
+            if (Math.abs(cx - playerChunkX) > SEARCH_CHUNK_RADIUS || Math.abs(cz - playerChunkZ) > SEARCH_CHUNK_RADIUS) continue;
+
+            ResourceLocation entityTypeId = ForgeRegistries.ENTITY_TYPES.getKey(entity.getType());
+            if (entityTypeId == null) continue;
+
+            String entityPath = normalize(entityTypeId.getPath());
+            String entityFull = normalize(entityTypeId.toString());
+            if (entityPath.contains(needle) || entityFull.contains(needle)) {
+                double distance = player.distSqr(entity.blockPosition());
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    best = entity;
+                }
+            }
+        }
+
+        if (best == null) return Optional.empty();
+
+        BlockPos entityPos = best.blockPosition();
+        BlockPos approach = approachPosition(mc, entityPos);
+        String displayName = best.getDisplayName().getString();
+        ResourceLocation entityId = ForgeRegistries.ENTITY_TYPES.getKey(best.getType());
+
+        Target target = new Target(TargetKind.SEARCH, query, displayName, entityId,
+            mc.level.dimension().location().toString(), entityPos, approach, Math.sqrt(bestDistance));
         return Optional.of(target);
     }
 
@@ -212,8 +276,16 @@ public final class WayfinderManager {
             || target.blockId() == null) return ObservationState.UNKNOWN;
         if (!mc.level.dimension().location().toString().equals(target.dimension())) return ObservationState.UNKNOWN;
         if (!mc.level.hasChunkAt(target.pos())) return ObservationState.UNKNOWN;
+
         ResourceLocation current = ForgeRegistries.BLOCKS.getKey(mc.level.getBlockState(target.pos()).getBlock());
-        return target.blockId().equals(current) ? ObservationState.PRESENT : ObservationState.NO_LONGER_PRESENT;
+        if (target.blockId().equals(current)) return ObservationState.PRESENT;
+
+        for (Entity entity : mc.level.entitiesForRendering()) {
+            ResourceLocation entityId = ForgeRegistries.ENTITY_TYPES.getKey(entity.getType());
+            if (target.blockId().equals(entityId)) return ObservationState.PRESENT;
+        }
+
+        return ObservationState.NO_LONGER_PRESENT;
     }
 
     public String searchFailure(String query) {

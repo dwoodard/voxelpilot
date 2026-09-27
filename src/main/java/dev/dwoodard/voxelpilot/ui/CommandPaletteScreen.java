@@ -24,6 +24,11 @@ public final class CommandPaletteScreen extends Screen {
     private List<PaletteSuggestionService.Item> suggestions = List.of();
     private int selected;
     private String actionReference;
+    private int scrollLeftPane = 0;
+    private int scrollRightPane = 0;
+    private static String lastInput = "";
+    private static int lastSelected = 0;
+    private boolean suppressUpdateOnInputChange = false;
 
     public CommandPaletteScreen() { super(Component.literal("VoxelPilot")); }
 
@@ -35,7 +40,12 @@ public final class CommandPaletteScreen extends Screen {
         input = new EditBox(font, x + 16, y + 16, w - 32, 24, Component.literal("Ask VoxelPilot"));
         input.setMaxLength(500);
         input.setHint(Component.literal("/ command   @ reference   # designate   or ask VoxelPilot…"));
-        input.setResponder(value -> { selected = 0; updateSuggestions(value); });
+        input.setResponder(value -> {
+            if (!suppressUpdateOnInputChange) {
+                selected = 0;
+                updateSuggestions(value);
+            }
+        });
         addRenderableWidget(input);
         setInitialFocus(input);
         updateSuggestions("");
@@ -66,6 +76,27 @@ public final class CommandPaletteScreen extends Screen {
         String value = input.getValue().trim();
         if (value.startsWith("@") && !value.contains(" ")) return value;
         return null;
+    }
+
+    private String getRightPaneContent() {
+        if (actionReference != null) {
+            var reference = ReferenceResolver.resolve(Minecraft.getInstance(), actionReference.substring(1));
+            if (reference.isPresent()) return reference.get().paletteLabel();
+            return "Reference not found";
+        }
+
+        if (!suggestions.isEmpty()) {
+            var selected = suggestions.get(Math.min(this.selected, suggestions.size() - 1));
+            if (selected.source() == PaletteSuggestionService.Source.REFERENCE) {
+                String token = selectedReferenceToken();
+                if (token != null && token.startsWith("@")) {
+                    var reference = ReferenceResolver.resolve(Minecraft.getInstance(), token.substring(1));
+                    if (reference.isPresent()) return reference.get().paletteLabel();
+                }
+            }
+        }
+
+        return status;
     }
 
     private void openReferenceActions() {
@@ -124,10 +155,24 @@ public final class CommandPaletteScreen extends Screen {
         String before = input.getValue();
         int cursor = input.getCursorPosition();
 
-        // Suggestion values already contain the complete input with only the active token
-        // replaced, so references and server-command arguments remain composable.
+        suppressUpdateOnInputChange = true;
         input.setValue(value);
         input.setCursorPosition(Math.max(0, Math.min(value.length(), cursor + value.length() - before.length())));
+        suppressUpdateOnInputChange = false;
+        updateSuggestions(value);
+    }
+
+    private void acceptSuggestionWithoutRefilter() {
+        if (suggestions.isEmpty()) return;
+        PaletteSuggestionService.Item suggestion = suggestions.get(Math.min(selected, suggestions.size() - 1));
+        String value = suggestion.value();
+        String before = input.getValue();
+        int cursor = input.getCursorPosition();
+
+        suppressUpdateOnInputChange = true;
+        input.setValue(value);
+        input.setCursorPosition(Math.max(0, Math.min(value.length(), cursor + value.length() - before.length())));
+        suppressUpdateOnInputChange = false;
     }
 
     @Override
@@ -139,14 +184,27 @@ public final class CommandPaletteScreen extends Screen {
             status = "Type what you want VoxelPilot to do";
             return true;
         }
+        boolean shiftModifier = (modifiers & GLFW.GLFW_MOD_SHIFT) != 0;
+        boolean commandModifier = (modifiers & (GLFW.GLFW_MOD_SUPER | GLFW.GLFW_MOD_CONTROL)) != 0;
+
+        if (shiftModifier && (keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN)) {
+            scrollRightPane += keyCode == GLFW.GLFW_KEY_UP ? -2 : 2;
+            scrollRightPane = Math.max(0, scrollRightPane);
+            return true;
+        }
+
+        if (commandModifier && (keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN) && !suggestions.isEmpty()) {
+            scrollLeftPane += keyCode == GLFW.GLFW_KEY_UP ? -2 : 2;
+            scrollLeftPane = Math.max(0, scrollLeftPane);
+            return true;
+        }
+
         if ((keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN) && !suggestions.isEmpty()) {
             selected = keyCode == GLFW.GLFW_KEY_UP
                 ? (selected - 1 + suggestions.size()) % suggestions.size()
                 : (selected + 1) % suggestions.size();
             return true;
         }
-        boolean commandModifier = (modifiers & (GLFW.GLFW_MOD_SUPER | GLFW.GLFW_MOD_CONTROL)) != 0;
-        boolean shiftModifier = (modifiers & GLFW.GLFW_MOD_SHIFT) != 0;
         if (commandModifier) {
             var shortcut = ShortcutRegistry.match(keyCode, shiftModifier);
             if (shortcut.isPresent()
@@ -181,8 +239,25 @@ public final class CommandPaletteScreen extends Screen {
             status = "Reset · preview, chat, and AI history cleared";
             return true;
         }
+        if (keyCode == GLFW.GLFW_KEY_C && (modifiers & (GLFW.GLFW_MOD_SUPER | GLFW.GLFW_MOD_CONTROL)) != 0) {
+            actionReference = null;
+            selected = 0;
+            scrollLeftPane = 0;
+            scrollRightPane = 0;
+            input.setValue("");
+            updateSuggestions("");
+            PaletteHistory.get().clear();
+            status = "Cleared";
+            return true;
+        }
         if (keyCode == GLFW.GLFW_KEY_TAB && !suggestions.isEmpty()) {
-            acceptSuggestion();
+            boolean shift = (modifiers & GLFW.GLFW_MOD_SHIFT) != 0;
+            acceptSuggestionWithoutRefilter();
+            if (shift) {
+                selected = (selected - 1 + suggestions.size()) % suggestions.size();
+            } else {
+                selected = (selected + 1) % suggestions.size();
+            }
             return true;
         }
         // Cmd+Shift+Enter confirms the preview from inside the palette too, whatever is typed.
@@ -245,57 +320,69 @@ public final class CommandPaletteScreen extends Screen {
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         renderBackground(graphics);
-        int w = Math.min(620, width - 40);
+        int w = Math.min(1000, width - 40);
         int x = (width - w) / 2;
         int y = Math.max(30, height / 5);
 
-        List<PaletteHistory.Entry> history = PaletteHistory.get().entries();
-        int start = Math.max(0, history.size() - MAX_TRANSCRIPT_LINES);
-        List<PaletteHistory.Entry> transcript = history.subList(start, history.size());
-        boolean showWorking = "Working…".equals(status);
-        boolean showHint = transcript.isEmpty() && !showWorking;
-
-        int textWidth = w - 32;
-        int linesShown = 0;
-        for (PaletteHistory.Entry entry : transcript) {
-            String text = ("you".equals(entry.who()) ? "> " : "") + entry.text();
-            linesShown += Math.max(1, font.split(Component.literal(text), textWidth).size());
-        }
-        if (showWorking || showHint) {
-            linesShown += Math.max(1, font.split(Component.literal(status), textWidth).size());
-        }
-        int rowsHeight = suggestions.size() * 22;
-        int boxHeight = 66 + linesShown * 12 + 10 + rowsHeight + 20;
-        graphics.fill(x, y, x + w, y + boxHeight, 0xEE15171A);
+        graphics.fill(x, y, x + w, y + height - y - 40, 0xEE15171A);
         graphics.drawString(font, "VOXELPILOT", x + 16, y + 4, 0xFF9AA0A6, false);
 
-        int ty = y + 52;
-        for (PaletteHistory.Entry entry : transcript) {
-            boolean isYou = "you".equals(entry.who());
-            String text = (isYou ? "> " : "") + entry.text();
-            for (var line : font.split(Component.literal(text), textWidth)) {
-                graphics.drawString(font, line, x + 16, ty, isYou ? 0xFF9AA0A6 : 0xFFE8EAED, false);
-                ty += 12;
-            }
-        }
-        if (showWorking || showHint) {
-            for (var line : font.split(Component.literal(status), textWidth)) {
-                graphics.drawString(font, line, x + 16, ty, 0xFF9AA0A6, false);
-                ty += 12;
-            }
-        }
+        int leftW = w / 2 - 2;
+        int rightW = w / 2 - 2;
+        int splitX = x + w / 2;
+        int contentY = y + 32;
+        int contentH = height - contentY - 40;
 
-        int sy = ty + 8;
-        for (int i = 0; i < suggestions.size(); i++) {
-            int bg = i == selected ? 0xFF2B3035 : 0x00151515;
-            graphics.fill(x + 10, sy + i * 22, x + w - 10, sy + i * 22 + 20, bg);
-            PaletteSuggestionService.Item suggestion = suggestions.get(i);
-            graphics.drawString(font, suggestion.label(), x + 18, sy + i * 22 + 6, 0xFFE8EAED, false);
-            String source = suggestion.source().name();
-            int sourceWidth = font.width(source);
-            graphics.drawString(font, source, x + w - 18 - sourceWidth, sy + i * 22 + 6, 0xFF777D84, false);
-        }
+        renderLeftPane(graphics, x + 8, contentY, leftW, contentH);
+        renderRightPane(graphics, splitX + 4, contentY, rightW, contentH);
+
         super.render(graphics, mouseX, mouseY, partialTick);
+    }
+
+    private void renderLeftPane(GuiGraphics graphics, int x, int y, int w, int h) {
+        graphics.fill(x, y, x + w, y + h, 0x22000000);
+        graphics.drawString(font, "COMMANDS", x + 4, y + 2, 0xFF70FF8A, false);
+
+        int sy = y + 16;
+        int maxVisible = (h - 16) / 22;
+        int startIdx = Math.min(scrollLeftPane / 22, Math.max(0, suggestions.size() - maxVisible));
+
+        for (int i = startIdx; i < Math.min(startIdx + maxVisible, suggestions.size()); i++) {
+            int renderY = sy + (i - startIdx) * 22;
+            int bg = i == selected ? 0xFF2B3035 : 0x00151515;
+            graphics.fill(x + 2, renderY, x + w - 2, renderY + 20, bg);
+            PaletteSuggestionService.Item suggestion = suggestions.get(i);
+            String label = suggestion.label();
+            label = stripNamespace(label);
+            if (label.length() > 25) label = label.substring(0, 22) + "…";
+            graphics.drawString(font, label, x + 6, renderY + 6, 0xFFE8EAED, false);
+        }
+    }
+
+    private String stripNamespace(String text) {
+        int colon = text.lastIndexOf(':');
+        if (colon > 0 && colon < text.length() - 1) {
+            return text.substring(colon + 1);
+        }
+        return text;
+    }
+
+    private void renderRightPane(GuiGraphics graphics, int x, int y, int w, int h) {
+        graphics.fill(x, y, x + w, y + h, 0x22000000);
+        graphics.drawString(font, "FACTS", x + 4, y + 2, 0xFF70FF8A, false);
+
+        String content = getRightPaneContent();
+        int textW = w - 12;
+        var lines = font.split(Component.literal(content), textW);
+
+        int sy = y + 16 - scrollRightPane;
+        for (int i = 0; i < lines.size(); i++) {
+            int renderY = sy + i * 12;
+            if (renderY > y + h) break;
+            if (renderY + 12 > y) {
+                graphics.drawString(font, lines.get(i), x + 6, renderY, 0xFFE8EAED, false);
+            }
+        }
     }
 
     @Override public boolean isPauseScreen() { return false; }
