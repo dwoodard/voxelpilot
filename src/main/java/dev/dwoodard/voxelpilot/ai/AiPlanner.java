@@ -9,6 +9,7 @@ import dev.dwoodard.voxelpilot.build.ResolvedPlan;
 import dev.dwoodard.voxelpilot.plan.PlanException;
 import dev.dwoodard.voxelpilot.plan.PlanNode;
 import dev.dwoodard.voxelpilot.plan.PlanScript;
+import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import dev.dwoodard.voxelpilot.world.BlockCatalog;
 import dev.dwoodard.voxelpilot.world.WorldContextService;
@@ -93,6 +94,15 @@ public final class AiPlanner {
     }
 
     public static CompletableFuture<Outcome> plan(Minecraft mc, String userPrompt, GameContext gameContext) {
+        return plan(mc, userPrompt, gameContext, List.of());
+    }
+
+    public static CompletableFuture<Outcome> plan(
+        Minecraft mc,
+        String userPrompt,
+        GameContext gameContext,
+        List<ReferenceResolver.ResolvedReference> references
+    ) {
         ResolvedPlan existing = GhostPreviewManager.get().plan().orElse(null);
         Optional<Frame> current = Frame.current(mc);
         // A selection always decides where. If it differs from the one the current preview
@@ -107,6 +117,12 @@ public final class AiPlanner {
 
         StringBuilder content = new StringBuilder("REQUEST: ").append(userPrompt).append('\n');
         content.append("GAME: ").append(gameContext.promptSummary()).append('\n');
+        if (!references.isEmpty()) {
+            content.append("\nREFERENCES (resolved by Voxel Pilot; UNKNOWN means do not guess):\n");
+            for (ReferenceResolver.ResolvedReference reference : references) {
+                content.append(reference.promptContext()).append('\n');
+            }
+        }
         String recent = RecentHistory.get().render();
         if (!recent.isEmpty()) content.append("\nRECENT:\n").append(recent);
         if (previous != null && !previous.plan().script.isEmpty()) {
