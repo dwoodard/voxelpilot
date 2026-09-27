@@ -4,6 +4,7 @@ import dev.dwoodard.voxelpilot.ai.CommandProcessor;
 import dev.dwoodard.voxelpilot.ai.PaletteHistory;
 import dev.dwoodard.voxelpilot.ai.PaletteSuggestion;
 import dev.dwoodard.voxelpilot.ai.PaletteUsage;
+import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
 import dev.dwoodard.voxelpilot.build.BuildExecutor;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
@@ -47,24 +48,22 @@ public final class CommandPaletteScreen extends Screen {
     private void updateSuggestions(String query) {
         String trimmed = query.trim();
 
-        // @ is a composable reference token. Start with facts the client knows directly:
-        // online players. Places/designations can join this provider later without changing
-        // the palette interaction contract.
+        // @ resolves factual context while typing. The same ReferenceResolver also
+        // grounds AI requests, so the palette and AI cannot disagree about what @Steve means.
         int at = query.lastIndexOf('@');
         if (at >= 0 && (at == 0 || Character.isWhitespace(query.charAt(at - 1)))) {
             String needle = query.substring(at + 1).trim();
-            Minecraft mc = Minecraft.getInstance();
-            if (mc.getConnection() != null) {
-                suggestions = PaletteUsage.get().rank(
-                    mc.getConnection().getOnlinePlayers().stream()
-                        .map(info -> {
-                            String name = info.getProfile().getName();
-                            return new PaletteSuggestion("@" + name, "@" + name, "PLAYER");
-                        }).toList(),
-                    "@" + needle,
-                    6);
-                return;
-            }
+            suggestions = PaletteUsage.get().rank(
+                ReferenceResolver.matchingPlayers(Minecraft.getInstance(), needle, 8).stream()
+                    .map(reference -> new PaletteSuggestion(
+                        reference.paletteLabel(),
+                        reference.token(),
+                        "REFERENCE"
+                    ))
+                    .toList(),
+                "@" + needle,
+                6);
+            return;
         }
 
         if (trimmed.toLowerCase(Locale.ROOT).startsWith("/wayfinder")) {
