@@ -68,9 +68,12 @@ public final class WayfinderManager {
 
     public Optional<Target> findNext(Minecraft mc) {
         if (active == null || active.kind() != TargetKind.SEARCH || active.blockId() == null) return Optional.empty();
+        Target previous = active;
         previousSearchResults = new java.util.HashSet<>(previousSearchResults);
-        previousSearchResults.add(active.pos());
-        return findSearchTarget(mc, active.query(), previousSearchResults);
+        previousSearchResults.add(previous.pos());
+        Optional<Target> next = findSearchTarget(mc, previous.query(), previousSearchResults);
+        if (next.isEmpty()) active = previous;
+        return next;
     }
 
     public boolean canFindNext() {
@@ -174,7 +177,8 @@ public final class WayfinderManager {
 
         if (best != null) return best.immutable();
 
-        // Fallback preserves designation without claiming that the fallback is a traversable\n        // descent route.
+        // Fallback preserves designation without claiming that the fallback is a traversable
+        // descent route.
         return new BlockPos(target.getX(), directSurfaceY, target.getZ());
     }
 
