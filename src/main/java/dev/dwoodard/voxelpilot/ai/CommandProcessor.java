@@ -64,8 +64,7 @@ public final class CommandProcessor {
         }
 
         switch (lower) {
-            // Short aliases so quick answers never reach the model.
-            case "confirm", "confirm preview", "c", "y", "yes", "ok", "go", "build it", "do it" -> {
+            // World mutation requires explicit preview confirmation. Conversational text such as\n            // "yes", "go", or "do it" belongs to AI rather than acting as authorization.\n            case "confirm", "confirm preview" -> {
                 BuildExecutor.get().confirm(mc).whenComplete((result, error) -> mc.execute(() -> {
                     if (error == null && result.ok()) RecentHistory.get().mark("confirmed");
                     else RecentHistory.get().mark("confirm failed: " + (error != null ? rootMessage(error) : result.message()));
@@ -73,16 +72,16 @@ public final class CommandProcessor {
                 }));
                 return;
             }
-            case "cancel", "cancel preview", "x", "n", "no", "stop", "clear preview", "clear ghost", "remove preview", "clear the preview" -> {
+            case "cancel preview", "clear preview", "clear ghost", "remove preview", "clear the preview" -> {
                 if (BuildExecutor.get().active()) BuildExecutor.get().cancel();
                 GhostPreviewManager.get().clear();
                 RecentHistory.get().mark("cancelled");
                 reply.accept("Cancelled");
                 return;
             }
-            case "pause" -> { BuildExecutor.get().pause(); reply.accept("Build paused"); return; }
-            case "resume", "continue" -> { BuildExecutor.get().resume(); reply.accept("Build resumed"); return; }
-            case "undo", "u" -> {
+            case "pause build" -> { BuildExecutor.get().pause(); reply.accept("Build paused"); return; }
+            case "resume build" -> { BuildExecutor.get().resume(); reply.accept("Build resumed"); return; }
+            case "undo build" -> {
                 var result = BuildExecutor.get().undo(mc);
                 if (result.ok()) RecentHistory.get().mark("undone");
                 reply.accept(result.message());
