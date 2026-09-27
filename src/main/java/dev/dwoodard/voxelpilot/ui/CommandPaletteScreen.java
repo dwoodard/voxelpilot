@@ -41,7 +41,7 @@ public final class CommandPaletteScreen extends Screen {
     }
 
     private void updateSuggestions(String query) {
-        PaletteSuggestionService.suggestions(Minecraft.getInstance(), query, items -> {
+        PaletteSuggestionService.suggestions(Minecraft.getInstance(), query, input == null ? query.length() : input.getCursorPosition(), items -> {
             suggestions = items;
             if (selected >= suggestions.size()) selected = Math.max(0, suggestions.size() - 1);
         });
@@ -184,7 +184,9 @@ public final class CommandPaletteScreen extends Screen {
                 return true;
             }
         }
-        return super.keyPressed(keyCode, scanCode, modifiers);
+        boolean handled = super.keyPressed(keyCode, scanCode, modifiers);
+        if (handled && input != null) updateSuggestions(input.getValue());
+        return handled;
     }
 
     @Override
