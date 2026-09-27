@@ -23,6 +23,7 @@ public final class ContextualHud {
             case NAVIGATING -> renderNavigation(gui, mc, state);
             case APPROACHING_ENTRY -> renderApproach(gui, mc, state);
             case TARGETING -> renderPrecision(gui, mc, state);
+            case REACHED -> renderReached(gui, mc, state);
         }
         renderHighestPriorityObservation(gui, mc, state);
     }
@@ -44,6 +45,14 @@ public final class ContextualHud {
         gui.fill(x - 9, y - 7, x + width + 9, y + 27, 0x88000000);
         gui.drawCenteredString(mc.font, "◆  " + state.targetName().toUpperCase(), gui.guiWidth() / 2, y, 0xFF70FF8A);
         gui.drawCenteredString(mc.font, coordinates, gui.guiWidth() / 2, y + 13, 0xFFFFFFFF);
+    }
+
+    private static void renderReached(GuiGraphics gui, Minecraft mc, AwarenessState state) {
+        String detail = state.targetObservation() == dev.dwoodard.voxelpilot.reference.ObservationState.NO_LONGER_PRESENT
+            ? "NO LONGER PRESENT · Cmd+N Find Next"
+            : "REACHED";
+        String line = "◆ " + state.targetName().toUpperCase() + " · " + detail;
+        graphics.drawCenteredString(mc.font, line, gui.guiWidth() / 2, 10, 0xFF70FF8A);
     }
 
     private static void renderBearing(GuiGraphics gui, Minecraft mc, AwarenessState state, boolean approaching) {
