@@ -136,8 +136,7 @@ public final class WayfinderManager {
 
         if (best != null) return best.immutable();
 
-        // Fallback preserves designation without claiming that the fallback is a safe
-        // descent route.
+        // Fallback preserves designation without claiming that the fallback is a traversable\n        // descent route.
         return new BlockPos(target.getX(), directSurfaceY, target.getZ());
     }
 
