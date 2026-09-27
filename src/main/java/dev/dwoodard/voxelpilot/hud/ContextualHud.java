@@ -92,6 +92,13 @@ public final class ContextualHud {
             if (resolved.isEmpty()) continue;
             var reference = resolved.get();
 
+            // The active Wayfinder already owns the strong navigation cue. Do not render
+            // the same reference again as a passive edge pin.
+            var active = dev.dwoodard.voxelpilot.wayfinder.WayfinderManager.get().active();
+            if (active.isPresent()
+                && active.get().kind() == dev.dwoodard.voxelpilot.wayfinder.WayfinderManager.TargetKind.REFERENCE
+                && active.get().query().equalsIgnoreCase(reference.token())) continue;
+
             // Unknown/stale spatial facts do not get a fake directional marker. Cmd-K is
             // still the place to inspect them.
             if (!reference.hasPosition()
