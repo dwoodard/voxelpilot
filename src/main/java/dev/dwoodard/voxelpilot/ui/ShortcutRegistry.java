@@ -14,6 +14,7 @@ public final class ShortcutRegistry {
 
     private static final List<Shortcut> SHORTCUTS = List.of(
         new Shortcut("Cmd+N", "Find Next", GLFW.GLFW_KEY_N, false, "/wayfinder next"),
+        new Shortcut("Cmd+P", "Pin / Unpin reference", GLFW.GLFW_KEY_P, false, null),
         new Shortcut("Cmd+Z", "Undo last build", GLFW.GLFW_KEY_Z, false, "undo build"),
         new Shortcut("Cmd+Shift+Enter", "Confirm preview", GLFW.GLFW_KEY_ENTER, true, "confirm preview")
     );
