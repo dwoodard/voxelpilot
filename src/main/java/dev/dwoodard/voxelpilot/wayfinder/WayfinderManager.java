@@ -92,15 +92,15 @@ public final class WayfinderManager {
     }
 
     private static BlockPos approachPosition(Minecraft mc, BlockPos target) {
-        // Underground targets use an offset entry so Wayfinder never visually suggests
-        // standing directly above the objective and digging straight down.
+        // Underground targets use an offset suggested entry so Wayfinder never visually
+        // suggests standing directly above the objective and digging straight down.
         int directSurfaceY = mc.level.getHeight(
             net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,
             target.getX(), target.getZ());
         int depth = directSurfaceY - target.getY();
         boolean underground = depth > 4;
 
-        int minRadius = underground ? 6 : 0;
+        int minRadius = underground ? 4 : 0;
         int maxRadius = underground ? 12 : 8;
         BlockPos player = mc.player.blockPosition();
         BlockPos best = null;
@@ -121,9 +121,11 @@ public final class WayfinderManager {
                     // Prefer entries convenient to the player while keeping underground
                     // targets deliberately offset from the target column.
                     double playerDistance = feet.distSqr(player);
-                    double targetOffsetPenalty = Math.abs(Math.sqrt(
-                        target.distSqr(new BlockPos(x, target.getY(), z))) - 9.0) * 4.0;
-                    double score = playerDistance + targetOffsetPenalty;
+                    double horizontalOffset = Math.sqrt(dx * dx + dz * dz);
+                    // No magic "ideal" offset: reward a valid, non-zero offset while
+                    // primarily preferring an entry convenient to the player.
+                    double offsetPenalty = underground ? (1.0 / horizontalOffset) * 64.0 : 0.0;
+                    double score = playerDistance + offsetPenalty;
                     if (score < bestScore) {
                         bestScore = score;
                         best = feet;
