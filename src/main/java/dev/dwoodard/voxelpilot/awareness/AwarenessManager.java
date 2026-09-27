@@ -5,67 +5,110 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
+import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
 
+import java.util.List;
 import java.util.Optional;
 
 public final class AwarenessManager {
     private static final AwarenessManager INSTANCE = new AwarenessManager();
     private final TerrainAwarenessProvider terrain = new TerrainAwarenessProvider();
 
+    private AwarenessState snapshot;
+    private BlockPos trackedTarget;
+    private Phase phase = Phase.NAVIGATING;
+    private int scanCooldown;
+
     private AwarenessManager() {}
 
     public static AwarenessManager get() { return INSTANCE; }
 
-    public Optional<AwarenessState> current(Minecraft mc) {
-        if (mc.player == null) return Optional.empty();
-
-        return WayfinderManager.get().active().map(target -> {
-            Vec3 player = mc.player.position();
-            Vec3 targetCenter = Vec3.atCenterOf(target.pos());
-            double dx = targetCenter.x - player.x;
-            double dz = targetCenter.z - player.z;
-            double horizontal = Math.sqrt(dx * dx + dz * dz);
-            int vertical = target.pos().getY() - mc.player.blockPosition().getY();
-
-            Vec3 approachCenter = Vec3.atCenterOf(target.approach());
-            double approachDx = approachCenter.x - player.x;
-            double approachDz = approachCenter.z - player.z;
-            double approachDistance = Math.sqrt(approachDx * approachDx + approachDz * approachDz);
-
-            double bearing = Math.toDegrees(Math.atan2(-dx, dz));
-            double relativeBearing = Mth.wrapDegrees(bearing - mc.player.getYRot());
-
-            AwarenessLevel level;
-            if (horizontal <= 8 && Math.abs(vertical) <= 8) {
-                level = AwarenessLevel.PRECISION;
-            } else if (approachDistance <= 24) {
-                level = AwarenessLevel.APPROACH;
-            } else {
-                level = AwarenessLevel.NAVIGATION;
-            }
-
-            return new AwarenessState(
-                level,
-                target.name(),
-                target.pos(),
-                target.approach(),
-                horizontal,
-                approachDistance,
-                vertical,
-                relativeBearing,
-                terrain.observe(mc, target.pos())
-            );
-        });
+    public Optional<AwarenessState> snapshot() {
+        return Optional.ofNullable(snapshot);
     }
 
-    public enum AwarenessLevel {
-        NAVIGATION,
-        APPROACH,
-        PRECISION
+    @SubscribeEvent
+    public void onClientTick(TickEvent.ClientTickEvent event) {
+        if (event.phase != TickEvent.Phase.END) return;
+
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.level == null) {
+            clear();
+            return;
+        }
+
+        var active = WayfinderManager.get().active();
+        if (active.isEmpty()) {
+            clear();
+            return;
+        }
+
+        var target = active.get();
+        if (!target.pos().equals(trackedTarget)) {
+            trackedTarget = target.pos();
+            phase = Phase.NAVIGATING;
+            scanCooldown = 0;
+        }
+
+        Vec3 player = mc.player.position();
+        double horizontal = horizontalDistance(player, target.pos());
+        int vertical = target.pos().getY() - mc.player.blockPosition().getY();
+        double approachDistance = horizontalDistance(player, target.approach());
+
+        if (phase == Phase.NAVIGATING && approachDistance <= 24) {
+            phase = Phase.APPROACHING_ENTRY;
+        }
+        if (phase == Phase.APPROACHING_ENTRY && approachDistance <= 3) {
+            phase = Phase.TARGETING;
+        }
+
+        Vec3 targetCenter = Vec3.atCenterOf(target.pos());
+        double bearing = Math.toDegrees(Math.atan2(-(targetCenter.x - player.x), targetCenter.z - player.z));
+        double relativeBearing = Mth.wrapDegrees(bearing - mc.player.getYRot());
+
+        List<TerrainAwarenessProvider.Observation> observations =
+            snapshot == null ? List.of() : snapshot.observations();
+        if (scanCooldown-- <= 0) {
+            observations = terrain.observe(mc, target.pos(), target.approach());
+            scanCooldown = 10;
+        }
+
+        snapshot = new AwarenessState(
+            phase,
+            target.name(),
+            target.pos(),
+            target.approach(),
+            horizontal,
+            approachDistance,
+            vertical,
+            relativeBearing,
+            observations
+        );
+    }
+
+    private static double horizontalDistance(Vec3 player, BlockPos pos) {
+        Vec3 center = Vec3.atCenterOf(pos);
+        double dx = center.x - player.x;
+        double dz = center.z - player.z;
+        return Math.sqrt(dx * dx + dz * dz);
+    }
+
+    private void clear() {
+        snapshot = null;
+        trackedTarget = null;
+        phase = Phase.NAVIGATING;
+        scanCooldown = 0;
+    }
+
+    public enum Phase {
+        NAVIGATING,
+        APPROACHING_ENTRY,
+        TARGETING
     }
 
     public record AwarenessState(
-        AwarenessLevel level,
+        Phase phase,
         String targetName,
         BlockPos targetPosition,
         BlockPos approachPosition,
@@ -73,6 +116,6 @@ public final class AwarenessManager {
         double approachDistance,
         int verticalDistance,
         double relativeBearing,
-        java.util.List<TerrainAwarenessProvider.Observation> observations
+        List<TerrainAwarenessProvider.Observation> observations
     ) {}
 }
