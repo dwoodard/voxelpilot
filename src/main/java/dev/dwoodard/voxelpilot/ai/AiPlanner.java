@@ -123,6 +123,11 @@ public final class AiPlanner {
                 content.append(reference.promptContext()).append('\n');
             }
         }
+        String commandFacts = ServerCommandGrounding.describe(mc, userPrompt);
+        if (!commandFacts.isEmpty()) {
+            content.append("\nSERVER COMMAND FACTS (read-only; mentioning a command never executes it):\n")
+                .append(commandFacts).append('\n');
+        }
         String recent = RecentHistory.get().render();
         if (!recent.isEmpty()) content.append("\nRECENT:\n").append(recent);
         if (previous != null && !previous.plan().script.isEmpty()) {
