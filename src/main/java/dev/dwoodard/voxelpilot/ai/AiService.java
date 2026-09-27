@@ -1,6 +1,9 @@
 package dev.dwoodard.voxelpilot.ai;
 
+import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
 import net.minecraft.client.Minecraft;
+
+import java.util.List;
 
 import java.util.concurrent.CompletableFuture;
 
@@ -16,8 +19,9 @@ public final class AiService {
 
     public static CompletableFuture<AiResult> run(Minecraft mc, String request) {
         GameContext context = GameContext.capture(mc);
+        List<ReferenceResolver.ResolvedReference> references = ReferenceResolver.resolveAll(mc, request);
 
-        return AiPlanner.plan(mc, request, context).thenApply(outcome -> {
+        return AiPlanner.plan(mc, request, context, references).thenApply(outcome -> {
             if (outcome.resolved() == null && outcome.plan().nodes.isEmpty()
                 && outcome.plan().suggestedMove == null) {
                 String message = outcome.plan().message;
