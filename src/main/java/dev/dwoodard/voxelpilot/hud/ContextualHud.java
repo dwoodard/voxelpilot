@@ -23,7 +23,7 @@ public final class ContextualHud {
             case NAVIGATING -> renderNavigation(gui, mc, state);
             case APPROACHING_ENTRY -> renderApproach(gui, mc, state);
             case TARGETING -> renderPrecision(gui, mc, state);
-            case REACHED -> renderReached(gui, mc, state);
+            case REACHED, TARGET_LOST -> renderReached(gui, mc, state);
         }
         renderHighestPriorityObservation(gui, mc, state);
     }
