@@ -49,7 +49,7 @@ public final class ReferenceResolver {
                 distance = Math.sqrt(mc.player.blockPosition().distSqr(value.position()));
             }
             return Optional.of(new ResolvedReference(
-                "@" + value.name(), "PLACE", value.name(), false,
+                "@" + value.name(), ReferenceType.PLACE, value.name(), false,
                 value.dimension(), value.position().getX(), value.position().getY(), value.position().getZ(),
                 distance, EvidenceState.DIRECT, ObservationState.PRESENT, value.observedAt()
             ));
@@ -68,7 +68,7 @@ public final class ReferenceResolver {
 
         if (entity == null) {
             return Optional.of(new ResolvedReference(
-                "@" + canonicalName, "PLAYER", canonicalName, true,
+                "@" + canonicalName, ReferenceType.PLAYER, canonicalName, true,
                 null, null, null, null, null, EvidenceState.DIRECT, ObservationState.UNKNOWN, System.currentTimeMillis()
             ));
         }
@@ -112,7 +112,7 @@ public final class ReferenceResolver {
 
     public record ResolvedReference(
         String token,
-        String type,
+        ReferenceType type,
         String name,
         boolean online,
         String dimension,
