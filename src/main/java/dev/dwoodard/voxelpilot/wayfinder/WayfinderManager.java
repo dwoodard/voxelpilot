@@ -21,7 +21,7 @@ import java.util.Set;
 
 public final class WayfinderManager {
     private static final WayfinderManager INSTANCE = new WayfinderManager();
-    private static final int SEARCH_CHUNK_RADIUS = 8;
+    private static final int SEARCH_CHUNK_RADIUS = 1000;
 
     private Target active;
     private Set<BlockPos> previousSearchResults = Set.of();
