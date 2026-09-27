@@ -1,16 +1,14 @@
 package dev.dwoodard.voxelpilot.hud;
 
-import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
+import dev.dwoodard.voxelpilot.awareness.AwarenessManager;
+import dev.dwoodard.voxelpilot.awareness.AwarenessManager.AwarenessState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.util.Mth;
-import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 
 /**
- * Contextual pilot HUD. Cmd-K establishes intent; this surface reports only the
- * information needed while that activity is active.
+ * Presentation only. Awareness decides what matters; the HUD renders that state.
  */
 public final class ContextualHud {
     @SubscribeEvent
@@ -18,45 +16,53 @@ public final class ContextualHud {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.options.hideGui) return;
 
-        WayfinderManager.get().active().ifPresent(target ->
-            renderWayfinder(event.getGuiGraphics(), mc, target));
+        AwarenessManager.get().current(mc).ifPresent(state ->
+            render(event.getGuiGraphics(), mc, state));
     }
 
-    private static void renderWayfinder(GuiGraphics gui, Minecraft mc, WayfinderManager.Target target) {
-        Vec3 player = mc.player.position();
-        Vec3 targetCenter = Vec3.atCenterOf(target.pos());
-        double dx = targetCenter.x - player.x;
-        double dz = targetCenter.z - player.z;
-        double range = Math.sqrt(dx * dx + dz * dz);
-        int vertical = target.pos().getY() - mc.player.blockPosition().getY();
+    private static void render(GuiGraphics gui, Minecraft mc, AwarenessState state) {
+        switch (state.level()) {
+            case NAVIGATION -> renderNavigation(gui, mc, state);
+            case APPROACH -> renderApproach(gui, mc, state);
+            case PRECISION -> renderPrecision(gui, mc, state);
+        }
+    }
 
-        double bearing = Math.toDegrees(Math.atan2(-dx, dz));
-        double relative = Mth.wrapDegrees(bearing - mc.player.getYRot());
-        String cue = directionCue(relative);
+    private static void renderNavigation(GuiGraphics gui, Minecraft mc, AwarenessState state) {
+        renderBearing(gui, mc, state);
+        renderPanel(gui, mc, "WAYFINDER  //  TRACKING", state.targetName().toUpperCase(),
+            "RANGE " + Math.round(state.horizontalDistance()) + "m  //  " + verticalLabel(state.verticalDistance()));
+    }
 
-        String title = "WAYFINDER  //  TRACKING";
-        String targetLine = target.name().toUpperCase();
-        String rangeLine = "RANGE " + Math.round(range) + "m  //  " + verticalLabel(vertical);
+    private static void renderApproach(GuiGraphics gui, Minecraft mc, AwarenessState state) {
+        renderBearing(gui, mc, state);
+        renderPanel(gui, mc, "WAYFINDER  //  APPROACH", state.targetName().toUpperCase(),
+            "ENTRY " + Math.round(state.approachDistance()) + "m  //  TARGET " + verticalLabel(state.verticalDistance()));
+    }
 
-        int margin = 12;
-        int bottom = gui.guiHeight() - 42;
-        gui.fill(margin - 5, bottom - 5, margin + 178, bottom + 31, 0x88000000);
-        gui.drawString(mc.font, title, margin, bottom, 0xFF70FF8A, false);
-        gui.drawString(mc.font, targetLine, margin, bottom + 11, 0xFFFFFFFF, false);
-        gui.drawString(mc.font, rangeLine, margin, bottom + 22, 0xFFB8C0C8, false);
+    private static void renderPrecision(GuiGraphics gui, Minecraft mc, AwarenessState state) {
+        var pos = state.targetPosition();
+        renderPanel(gui, mc, "WAYFINDER  //  PRECISION", state.targetName().toUpperCase(),
+            "XYZ " + pos.getX() + " / " + pos.getY() + " / " + pos.getZ());
+    }
 
-        // A compact edge cue keeps the target findable even when the world-space
-        // designation is behind the camera. Near-center headings collapse to ACQUIRED.
-        String bearingLine = cue + "  " + Math.round(Math.abs(relative)) + "\u00b0";
-        int width = mc.font.width(bearingLine);
+    private static void renderBearing(GuiGraphics gui, Minecraft mc, AwarenessState state) {
+        double relative = state.relativeBearing();
+        String cue = Math.abs(relative) <= 8 ? "◆ ACQUIRED" : relative < 0 ? "◀ TARGET" : "TARGET ▶";
+        String line = cue + "  " + Math.round(Math.abs(relative)) + "\u00b0";
+        int width = mc.font.width(line);
         int x = (gui.guiWidth() - width) / 2;
         gui.fill(x - 7, 8, x + width + 7, 24, 0x88000000);
-        gui.drawString(mc.font, bearingLine, x, 12, 0xFF70FF8A, false);
+        gui.drawString(mc.font, line, x, 12, 0xFF70FF8A, false);
     }
 
-    private static String directionCue(double relative) {
-        if (Math.abs(relative) <= 8) return "◆ ACQUIRED";
-        return relative < 0 ? "◀ TARGET" : "TARGET ▶";
+    private static void renderPanel(GuiGraphics gui, Minecraft mc, String title, String target, String detail) {
+        int margin = 12;
+        int bottom = gui.guiHeight() - 42;
+        gui.fill(margin - 5, bottom - 5, margin + 210, bottom + 31, 0x88000000);
+        gui.drawString(mc.font, title, margin, bottom, 0xFF70FF8A, false);
+        gui.drawString(mc.font, target, margin, bottom + 11, 0xFFFFFFFF, false);
+        gui.drawString(mc.font, detail, margin, bottom + 22, 0xFFB8C0C8, false);
     }
 
     private static String verticalLabel(int vertical) {
