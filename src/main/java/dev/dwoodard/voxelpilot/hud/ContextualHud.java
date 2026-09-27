@@ -2,6 +2,8 @@ package dev.dwoodard.voxelpilot.hud;
 
 import dev.dwoodard.voxelpilot.awareness.AwarenessManager;
 import dev.dwoodard.voxelpilot.awareness.AwarenessManager.AwarenessState;
+import dev.dwoodard.voxelpilot.reference.ReferencePins;
+import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
@@ -13,6 +15,7 @@ public final class ContextualHud {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.options.hideGui) return;
         AwarenessManager.get().snapshot().ifPresent(state -> render(event.getGuiGraphics(), mc, state));
+        renderPinnedReferences(event.getGuiGraphics(), mc);
     }
 
     private static void render(GuiGraphics gui, Minecraft mc, AwarenessState state) {
@@ -75,6 +78,47 @@ public final class ContextualHud {
         int y = gui.guiHeight() - 20;
         gui.fill(x - 6, y - 4, gui.guiWidth() - 6, y + 12, 0x88000000);
         gui.drawString(mc.font, line, x, y, 0xFFFFD36A, false);
+    }
+
+
+    private static void renderPinnedReferences(GuiGraphics gui, Minecraft mc) {
+        var tokens = ReferencePins.get().tokens();
+        if (tokens.isEmpty()) return;
+
+        int x = 12;
+        int y = 12;
+        int width = 190;
+        int rowHeight = 12;
+        int height = 16 + tokens.size() * rowHeight;
+        gui.fill(x - 5, y - 5, x + width, y + height, 0x88000000);
+        gui.drawString(mc.font, "PINNED", x, y, 0xFF70FF8A, false);
+
+        int row = y + 14;
+        for (String token : tokens) {
+            String name = token.startsWith("@") ? token.substring(1) : token;
+            var resolved = ReferenceResolver.resolve(mc, name);
+            String line;
+            if (resolved.isEmpty()) {
+                line = token.toUpperCase() + "  UNKNOWN";
+            } else {
+                var reference = resolved.get();
+                StringBuilder detail = new StringBuilder(reference.token().substring(1).toUpperCase());
+                if (reference.distance() != null) {
+                    detail.append("  ").append(Math.round(reference.distance())).append("m");
+                    String bearing = reference.bearing();
+                    if (!bearing.isBlank()) detail.append(" ").append(bearing);
+                } else if (!reference.hasPosition()) {
+                    detail.append("  POSITION UNKNOWN");
+                } else if (mc.level != null
+                    && !mc.level.dimension().location().toString().equals(reference.dimension())) {
+                    detail.append("  ").append(reference.dimension());
+                }
+                if (reference.online()) detail.append("  ONLINE");
+                line = detail.toString();
+            }
+            gui.drawString(mc.font, line, x, row, 0xFFE8EAED, false);
+            row += rowHeight;
+        }
     }
 
     private static String verticalLabel(int vertical) {
