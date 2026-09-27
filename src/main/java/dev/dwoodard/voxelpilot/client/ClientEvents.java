@@ -160,13 +160,14 @@ public final class ClientEvents {
             LevelRenderer.renderLineBox(pose, lines, box.aabb(), 0.95F, 0.75F, 0.15F, 1.0F));
 
         WayfinderManager.get().active().ifPresent(target -> {
-            // Wayfinder designates locations; it does not claim a traversable route.
-            // Navigation belongs to the HUD layer, while world-space rendering stays
-            // limited to the suggested approach and exact target.
-            LevelRenderer.renderLineBox(pose, lines, new AABB(target.approach()).inflate(0.12),
-                0.25F, 1.0F, 0.35F, 1.0F);
-            LevelRenderer.renderLineBox(pose, lines, new AABB(target.pos()).inflate(0.04),
-                0.25F, 1.0F, 0.35F, 1.0F);
+            // Long-distance navigation belongs to the HUD. X-ray world markers are
+            // precision aids only, otherwise they become permanent visual clutter.
+            if (mc.player != null && mc.player.blockPosition().distSqr(target.pos()) <= 32 * 32) {
+                LevelRenderer.renderLineBox(pose, lines, new AABB(target.approach()).inflate(0.12),
+                    0.25F, 1.0F, 0.35F, 1.0F);
+                LevelRenderer.renderLineBox(pose, lines, new AABB(target.pos()).inflate(0.04),
+                    0.25F, 1.0F, 0.35F, 1.0F);
+            }
         });
 
         var changes = GhostPreviewManager.get().changes();
