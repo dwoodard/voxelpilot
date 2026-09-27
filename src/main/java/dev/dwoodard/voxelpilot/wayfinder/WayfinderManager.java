@@ -59,13 +59,13 @@ public final class WayfinderManager {
         Target target = new Target(TargetKind.REFERENCE, ref.token(), ref.name(), null,
             ref.dimension(), pos, pos, distance);
         previousSearchResults = Set.of();
-        active = target;
+        if (activate) active = target;
         return Optional.of(target);
     }
 
     public Optional<Target> findNearest(Minecraft mc, String query) {
         previousSearchResults = Set.of();
-        return findSearchTarget(mc, query, previousSearchResults);
+        return findSearchTarget(mc, query, previousSearchResults, true);
     }
 
     public Optional<Target> findNext(Minecraft mc) {
@@ -73,7 +73,7 @@ public final class WayfinderManager {
         Target previous = active;
         previousSearchResults = new java.util.HashSet<>(previousSearchResults);
         previousSearchResults.add(previous.pos());
-        Optional<Target> next = findSearchTarget(mc, previous.query(), previousSearchResults);
+        Optional<Target> next = findSearchTarget(mc, previous.query(), previousSearchResults, true);
         if (next.isEmpty()) active = previous;
         return next;
     }
@@ -82,7 +82,11 @@ public final class WayfinderManager {
         return active != null && active.kind() == TargetKind.SEARCH;
     }
 
-    private Optional<Target> findSearchTarget(Minecraft mc, String query, Set<BlockPos> excluded) {
+    public Optional<Target> inspectNearest(Minecraft mc, String query) {
+        return findSearchTarget(mc, query, Set.of(), false);
+    }
+
+    private Optional<Target> findSearchTarget(Minecraft mc, String query, Set<BlockPos> excluded, boolean activate) {
         if (mc.player == null || mc.level == null) return Optional.empty();
 
         List<Suggestion> matches = suggestions(query, 12);
