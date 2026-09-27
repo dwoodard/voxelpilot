@@ -8,6 +8,7 @@ import dev.dwoodard.voxelpilot.build.PreviewMover;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
 import dev.dwoodard.voxelpilot.reference.ReferenceStore;
+import dev.dwoodard.voxelpilot.reference.ReferencePins;
 import dev.dwoodard.voxelpilot.selection.StructureSelector;
 import dev.dwoodard.voxelpilot.ui.SettingsScreen;
 import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
@@ -44,6 +45,27 @@ public final class CommandProcessor {
 
         PaletteHistory.get().addUser(input);
         Consumer<String> reply = value -> { PaletteHistory.get().addAssistant(value); status.accept(value); };
+
+        if (lower.startsWith("/pin ")) {
+            String token = input.substring(input.indexOf(' ') + 1).trim();
+            ReferenceResolver.resolve(mc, token.startsWith("@") ? token.substring(1) : token)
+                .ifPresentOrElse(
+                    reference -> {
+                        ReferencePins.get().pin(reference.token());
+                        reply.accept("Pinned " + reference.token() + " to HUD");
+                    },
+                    () -> reply.accept("Unknown reference: " + token)
+                );
+            return;
+        }
+
+        if (lower.startsWith("/unpin ")) {
+            String token = input.substring(input.indexOf(' ') + 1).trim();
+            reply.accept(ReferencePins.get().unpin(token)
+                ? "Unpinned " + (token.startsWith("@") ? token : "@" + token)
+                : "Reference was not pinned");
+            return;
+        }
 
         if (input.startsWith("#") && !input.contains(" ")) {
             ReferenceStore.get().designate(mc, input.substring(1))
