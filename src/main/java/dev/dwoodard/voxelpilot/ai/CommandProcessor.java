@@ -146,13 +146,20 @@ public final class CommandProcessor {
         BridgeServer.get().ensureRunning();
         status.accept("Planning…");
         RecentHistory.Entry history = RecentHistory.get().start(input);
-        AiPlanner.plan(mc, input).whenComplete((outcome, error) -> mc.execute(() -> {
+        AiService.run(mc, input).whenComplete((result, error) -> mc.execute(() -> {
             if (error != null) {
                 history.fail("error: " + rootMessage(error));
                 reply.accept("AI error: " + rootMessage(error));
                 return;
             }
-            BuildPlan plan = outcome.plan();
+            if (result instanceof AiResult.Answer answer) {
+                history.finish(List.of(), "replied: " + answer.message());
+                reply.accept(answer.message());
+                return;
+            }
+            AiResult.Build build = (AiResult.Build) result;
+            BuildPlan plan = build.plan();
+            AiPlanner.Outcome outcome = new AiPlanner.Outcome(plan, build.resolved(), build.frame(), build.skipped());
             history.finish(plan.script, describe(outcome));
             if (outcome.resolved() == null) {
                 // Nothing to preview - either a move request, or the model correctly
