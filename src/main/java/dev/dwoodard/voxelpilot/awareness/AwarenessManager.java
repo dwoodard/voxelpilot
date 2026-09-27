@@ -1,6 +1,7 @@
 package dev.dwoodard.voxelpilot.awareness;
 
 import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
+import dev.dwoodard.voxelpilot.reference.ObservationState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
@@ -62,6 +63,9 @@ public final class AwarenessManager {
         if (phase == Phase.APPROACHING_ENTRY && approachDistance <= 3) {
             phase = Phase.TARGETING;
         }
+        double targetDistance = Math.sqrt(mc.player.blockPosition().distSqr(target.pos()));
+        if (targetDistance <= 4) phase = Phase.REACHED;
+        ObservationState targetObservation = WayfinderManager.get().observationState(mc, target);
 
         Vec3 targetCenter = Vec3.atCenterOf(target.pos());
         double bearing = Math.toDegrees(Math.atan2(-(targetCenter.x - player.x), targetCenter.z - player.z));
@@ -83,6 +87,7 @@ public final class AwarenessManager {
             approachDistance,
             vertical,
             relativeBearing,
+            targetObservation,
             observations
         );
     }
@@ -104,7 +109,8 @@ public final class AwarenessManager {
     public enum Phase {
         NAVIGATING,
         APPROACHING_ENTRY,
-        TARGETING
+        TARGETING,
+        REACHED
     }
 
     public record AwarenessState(
@@ -116,6 +122,7 @@ public final class AwarenessManager {
         double approachDistance,
         int verticalDistance,
         double relativeBearing,
+        ObservationState targetObservation,
         List<TerrainAwarenessProvider.Observation> observations
     ) {}
 }
