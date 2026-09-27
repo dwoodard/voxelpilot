@@ -28,15 +28,11 @@ public final class ContextualHud {
     }
 
     private static void renderNavigation(GuiGraphics gui, Minecraft mc, AwarenessState state) {
-        renderBearing(gui, mc, state);
-        renderPanel(gui, mc, "WAYFINDER  //  TRACKING", state.targetName().toUpperCase(),
-            Math.round(state.horizontalDistance()) + "m  //  " + verticalLabel(state.verticalDistance()));
+        renderBearing(gui, mc, state, false);
     }
 
     private static void renderApproach(GuiGraphics gui, Minecraft mc, AwarenessState state) {
-        renderBearing(gui, mc, state);
-        renderPanel(gui, mc, "WAYFINDER  //  APPROACH", state.targetName().toUpperCase(),
-            "SUGGESTED ENTRY " + Math.round(state.approachDistance()) + "m  //  TARGET " + verticalLabel(state.verticalDistance()));
+        renderBearing(gui, mc, state, true);
     }
 
     private static void renderPrecision(GuiGraphics gui, Minecraft mc, AwarenessState state) {
@@ -50,23 +46,18 @@ public final class ContextualHud {
         gui.drawCenteredString(mc.font, coordinates, gui.guiWidth() / 2, y + 13, 0xFFFFFFFF);
     }
 
-    private static void renderBearing(GuiGraphics gui, Minecraft mc, AwarenessState state) {
+    private static void renderBearing(GuiGraphics gui, Minecraft mc, AwarenessState state, boolean approaching) {
         double relative = state.relativeBearing();
-        String cue = Math.abs(relative) <= 8 ? "◆ ON BEARING" : relative < 0 ? "◀ TARGET" : "TARGET ▶";
-        String line = cue + "  " + Math.round(Math.abs(relative)) + "\u00b0";
+        String arrow = Math.abs(relative) <= 8 ? "◆" : relative < 0 ? "◀" : "▶";
+        String detail = approaching
+            ? Math.round(state.approachDistance()) + "m entry"
+            : Math.round(state.horizontalDistance()) + "m";
+        String line = arrow + " " + state.targetName().toUpperCase() + "  " + detail;
         int width = mc.font.width(line);
         int x = (gui.guiWidth() - width) / 2;
-        gui.fill(x - 7, 8, x + width + 7, 24, 0x88000000);
-        gui.drawString(mc.font, line, x, 12, 0xFF70FF8A, false);
-    }
 
-    private static void renderPanel(GuiGraphics gui, Minecraft mc, String title, String target, String detail) {
-        int margin = 12;
-        int bottom = gui.guiHeight() - 42;
-        gui.fill(margin - 5, bottom - 5, margin + 230, bottom + 31, 0x88000000);
-        gui.drawString(mc.font, title, margin, bottom, 0xFF70FF8A, false);
-        gui.drawString(mc.font, target, margin, bottom + 11, 0xFFFFFFFF, false);
-        gui.drawString(mc.font, detail, margin, bottom + 22, 0xFFB8C0C8, false);
+        // Active navigation gets one strong cue. No second panel repeating target/distance.
+        gui.drawString(mc.font, line, x, 10, 0xFF70FF8A, true);
     }
 
     private static void renderHighestPriorityObservation(GuiGraphics gui, Minecraft mc, AwarenessState state) {
