@@ -57,16 +57,13 @@ public final class AwarenessManager {
         int vertical = target.pos().getY() - mc.player.blockPosition().getY();
         double approachDistance = horizontalDistance(player, target.approach());
 
-        if (phase == Phase.NAVIGATING && approachDistance <= 24) {
-            phase = Phase.APPROACHING_ENTRY;
-        }
-        if (phase == Phase.APPROACHING_ENTRY && approachDistance <= 3) {
-            phase = Phase.TARGETING;
-        }
         double targetDistance = Math.sqrt(mc.player.blockPosition().distSqr(target.pos()));
-        if (targetDistance <= 4) phase = Phase.REACHED;
         ObservationState targetObservation = WayfinderManager.get().observationState(mc, target);
         if (targetObservation == ObservationState.NO_LONGER_PRESENT) phase = Phase.TARGET_LOST;
+        else if (targetDistance <= 4) phase = Phase.REACHED;
+        else if (approachDistance <= 3) phase = Phase.TARGETING;
+        else if (approachDistance <= 24) phase = Phase.APPROACHING_ENTRY;
+        else phase = Phase.NAVIGATING;
 
         Vec3 targetCenter = Vec3.atCenterOf(target.pos());
         double bearing = Math.toDegrees(Math.atan2(-(targetCenter.x - player.x), targetCenter.z - player.z));
