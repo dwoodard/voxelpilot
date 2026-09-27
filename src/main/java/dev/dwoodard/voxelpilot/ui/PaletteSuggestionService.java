@@ -81,6 +81,9 @@ public final class PaletteSuggestionService {
     private static List<Item> voxelPilotCommands(String input) {
         String lower = input.toLowerCase(Locale.ROOT);
         List<Item> items = new ArrayList<>();
+        if ("/shortcuts".startsWith(lower)) {
+            items.add(new Item("/shortcuts", "/shortcuts  ·  keyboard shortcuts", Source.VOXELPILOT));
+        }
         if ("/wayfinder".startsWith(lower) || lower.startsWith("/wayfinder")) {
             if (lower.startsWith("/wayfinder")) {
                 String query = input.length() > 10 ? input.substring(10).trim() : "";
