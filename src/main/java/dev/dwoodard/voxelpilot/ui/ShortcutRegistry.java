@@ -1,0 +1,37 @@
+package dev.dwoodard.voxelpilot.ui;
+
+import org.lwjgl.glfw.GLFW;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+/**
+ * Single source of truth for Voxel Pilot keyboard accelerators.
+ * Keep bindings here so keyboard handling and /shortcuts cannot drift apart.
+ */
+public final class ShortcutRegistry {
+    public record Shortcut(String keys, String label, int key, boolean shift, String command) {}
+
+    private static final List<Shortcut> SHORTCUTS = List.of(
+        new Shortcut("Cmd+Z", "Undo last build", GLFW.GLFW_KEY_Z, false, "undo build"),
+        new Shortcut("Cmd+Shift+Enter", "Confirm preview", GLFW.GLFW_KEY_ENTER, true, "confirm preview")
+    );
+
+    private ShortcutRegistry() {}
+
+    public static List<Shortcut> all() {
+        return SHORTCUTS;
+    }
+
+    public static String displayText() {
+        String rows = SHORTCUTS.stream()
+            .map(shortcut -> shortcut.keys() + "  " + shortcut.label())
+            .collect(Collectors.joining("\n"));
+        return "VOXEL PILOT SHORTCUTS\n"
+            + "Cmd+K  Open / close Voxel Pilot\n"
+            + "Cmd+/  Show this list\n"
+            + "Cmd+,  Settings\n"
+            + "Cmd+L  Reset palette history / preview\n"
+            + rows;
+    }
+}
