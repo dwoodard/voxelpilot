@@ -52,7 +52,7 @@ public final class ReferenceResolver {
         if (entity == null) {
             return Optional.of(new ResolvedReference(
                 "@" + canonicalName, "PLAYER", canonicalName, true,
-                null, null, null, null, "DIRECT"
+                null, null, null, null, null, "DIRECT"
             ));
         }
 
@@ -95,11 +95,6 @@ public final class ReferenceResolver {
         Double distance,
         String evidence
     ) {
-        public ResolvedReference(String token, String type, String name, boolean online,
-                                 String dimension, Integer x, Integer y, Integer z, String evidence) {
-            this(token, type, name, online, dimension, x, y, z, null, evidence);
-        }
-
         public boolean hasPosition() {
             return dimension != null && x != null && y != null && z != null;
         }
