@@ -91,7 +91,7 @@ public final class PaletteSuggestionService {
         if (mc.getConnection() == null) return List.of();
 
         String needle = token.text().substring(1);
-        return ReferenceResolver.matchingPlayers(mc, needle, 8).stream()
+        return ReferenceResolver.matching(mc, needle, 8).stream()
             .map(reference -> {
                 String completed = input.substring(0, token.start()) + reference.token() + input.substring(token.end());
                 return new Item(completed, reference.paletteLabel(), Source.REFERENCE);
