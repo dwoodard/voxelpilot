@@ -11,6 +11,7 @@ import dev.dwoodard.voxelpilot.reference.ReferenceStore;
 import dev.dwoodard.voxelpilot.reference.ReferencePins;
 import dev.dwoodard.voxelpilot.selection.StructureSelector;
 import dev.dwoodard.voxelpilot.ui.SettingsScreen;
+import dev.dwoodard.voxelpilot.ui.ShortcutRegistry;
 import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -45,6 +46,11 @@ public final class CommandProcessor {
 
         PaletteHistory.get().addUser(input);
         Consumer<String> reply = value -> { PaletteHistory.get().addAssistant(value); status.accept(value); };
+
+        if (lower.equals("/shortcuts") || lower.equals("/keys")) {
+            reply.accept(ShortcutRegistry.displayText());
+            return;
+        }
 
         if (lower.startsWith("/pin ")) {
             String token = input.substring(input.indexOf(' ') + 1).trim();
