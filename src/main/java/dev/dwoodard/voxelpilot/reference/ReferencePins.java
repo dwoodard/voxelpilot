@@ -6,7 +6,7 @@ import java.util.List;
 /** Session-scoped HUD pins identified by shared @ reference token. */
 public final class ReferencePins {
     private static final ReferencePins INSTANCE = new ReferencePins();
-    private static final int MAX_PINS = 6;
+    private static final int MAX_PINS = 4;
     private final List<String> tokens = new ArrayList<>();
 
     private ReferencePins() {}
