@@ -19,13 +19,14 @@ public record GameContext(
     BlockPos playerPosition,
     LookTarget lookingAt,
     String selectedItem,
+    String biome,
     String awarenessPhase,
     boolean hasSelection,
     boolean hasPreview
 ) {
     public static GameContext capture(Minecraft mc) {
         if (mc.player == null || mc.level == null) {
-            return new GameContext("unknown", BlockPos.ZERO, null, "", "", false, false);
+            return new GameContext("unknown", BlockPos.ZERO, null, "", "", "", false, false);
         }
 
         LookTarget look = null;
@@ -47,6 +48,7 @@ public record GameContext(
             mc.player.blockPosition().immutable(),
             look,
             mc.player.getMainHandItem().getHoverName().getString(),
+            mc.level.getBiome(mc.player.blockPosition()).unwrapKey().map(k -> k.location().toString()).orElse("unknown"),
             phase,
             SelectionManager.get().box().isPresent(),
             GhostPreviewManager.get().hasPreview()
@@ -62,6 +64,7 @@ public record GameContext(
                 .append("@").append(format(lookingAt.position()));
         }
         if (!selectedItem.isBlank()) out.append(", held=").append(selectedItem);
+        if (!biome.isBlank()) out.append(", biome=").append(biome);
         if (!awarenessPhase.isBlank()) out.append(", awareness=").append(awarenessPhase);
         if (hasSelection) out.append(", selection=active");
         if (hasPreview) out.append(", preview=active");
