@@ -102,7 +102,7 @@ public final class CommandProcessor {
             var target = WayfinderManager.get().findNext(mc);
             if (target.isEmpty()) {
                 reply.accept(WayfinderManager.get().canFindNext()
-                    ? "No additional match detected in currently loaded chunks"
+                    ? WayfinderManager.get().searchFailure("additional " + WayfinderManager.get().active().map(WayfinderManager.Target::query).orElse("match"))
                     : "Find Next requires an active Wayfinder search");
             } else {
                 reply.accept(WayfinderManager.get().describe(target.get(), mc.player.blockPosition()));
@@ -124,7 +124,9 @@ public final class CommandProcessor {
                 ? WayfinderManager.get().followReference(mc, query)
                 : WayfinderManager.get().findNearest(mc, query);
             if (target.isEmpty()) {
-                reply.accept("No " + query + " detected in currently loaded chunks");
+                reply.accept(query.startsWith("@")
+                    ? query + " has no known position in the current dimension"
+                    : WayfinderManager.get().searchFailure(query));
             } else {
                 reply.accept(WayfinderManager.get().describe(target.get(), mc.player.blockPosition()));
                 mc.setScreen(null);
