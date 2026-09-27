@@ -59,7 +59,7 @@ public final class WayfinderManager {
         Target target = new Target(TargetKind.REFERENCE, ref.token(), ref.name(), null,
             ref.dimension(), pos, pos, distance);
         previousSearchResults = Set.of();
-        if (activate) active = target;
+        active = target;
         return Optional.of(target);
     }
 
@@ -142,7 +142,7 @@ public final class WayfinderManager {
         BlockPos approach = approachPosition(mc, best);
         Target target = new Target(TargetKind.SEARCH, query, displayName(wanted), wantedId,
             mc.level.dimension().location().toString(), best.immutable(), approach, Math.sqrt(bestDistance));
-        active = target;
+        if (activate) active = target;
         return Optional.of(target);
     }
 
