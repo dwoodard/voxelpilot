@@ -130,6 +130,13 @@ public final class CommandPaletteScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (keyCode == GLFW.GLFW_KEY_ESCAPE && actionReference != null) {
+            actionReference = null;
+            selected = 0;
+            updateSuggestions(input.getValue());
+            status = "Type what you want VoxelPilot to do";
+            return true;
+        }
         if ((keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN) && !suggestions.isEmpty()) {
             selected = keyCode == GLFW.GLFW_KEY_UP
                 ? (selected - 1 + suggestions.size()) % suggestions.size()
@@ -241,7 +248,15 @@ public final class CommandPaletteScreen extends Screen {
         boolean showWorking = "Working…".equals(status);
         boolean showHint = transcript.isEmpty() && !showWorking;
 
-        int linesShown = transcript.size() + (showWorking || showHint ? 1 : 0);
+        int textWidth = w - 32;
+        int linesShown = 0;
+        for (PaletteHistory.Entry entry : transcript) {
+            String text = ("you".equals(entry.who()) ? "> " : "") + entry.text();
+            linesShown += Math.max(1, font.split(Component.literal(text), textWidth).size());
+        }
+        if (showWorking || showHint) {
+            linesShown += Math.max(1, font.split(Component.literal(status), textWidth).size());
+        }
         int rowsHeight = suggestions.size() * 22;
         int boxHeight = 66 + linesShown * 12 + 10 + rowsHeight + 20;
         graphics.fill(x, y, x + w, y + boxHeight, 0xEE15171A);
@@ -251,13 +266,16 @@ public final class CommandPaletteScreen extends Screen {
         for (PaletteHistory.Entry entry : transcript) {
             boolean isYou = "you".equals(entry.who());
             String text = (isYou ? "> " : "") + entry.text();
-            if (text.length() > 95) text = text.substring(0, 92) + "...";
-            graphics.drawString(font, text, x + 16, ty, isYou ? 0xFF9AA0A6 : 0xFFE8EAED, false);
-            ty += 12;
+            for (var line : font.split(Component.literal(text), textWidth)) {
+                graphics.drawString(font, line, x + 16, ty, isYou ? 0xFF9AA0A6 : 0xFFE8EAED, false);
+                ty += 12;
+            }
         }
         if (showWorking || showHint) {
-            graphics.drawString(font, status, x + 16, ty, 0xFF9AA0A6, false);
-            ty += 12;
+            for (var line : font.split(Component.literal(status), textWidth)) {
+                graphics.drawString(font, line, x + 16, ty, 0xFF9AA0A6, false);
+                ty += 12;
+            }
         }
 
         int sy = ty + 8;
