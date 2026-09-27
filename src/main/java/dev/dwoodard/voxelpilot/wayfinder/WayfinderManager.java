@@ -14,12 +14,14 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 
 public final class WayfinderManager {
     private static final WayfinderManager INSTANCE = new WayfinderManager();
     private static final int SEARCH_CHUNK_RADIUS = 8;
 
     private Target active;
+    private Set<BlockPos> previousSearchResults = Set.of();
 
     private WayfinderManager() {}
 
@@ -52,18 +54,37 @@ public final class WayfinderManager {
         if (mc.level == null || !mc.level.dimension().location().toString().equals(ref.dimension())) return Optional.empty();
         BlockPos pos = new BlockPos(ref.x(), ref.y(), ref.z());
         double distance = Math.sqrt(mc.player.blockPosition().distSqr(pos));
-        Target target = new Target(null, ref.name(), pos, pos, distance);
+        Target target = new Target(TargetKind.REFERENCE, ref.token(), ref.name(), null,
+            ref.dimension(), pos, pos, distance);
+        previousSearchResults = Set.of();
         active = target;
         return Optional.of(target);
     }
 
     public Optional<Target> findNearest(Minecraft mc, String query) {
+        previousSearchResults = Set.of();
+        return findSearchTarget(mc, query, previousSearchResults);
+    }
+
+    public Optional<Target> findNext(Minecraft mc) {
+        if (active == null || active.kind() != TargetKind.SEARCH || active.blockId() == null) return Optional.empty();
+        previousSearchResults = new java.util.HashSet<>(previousSearchResults);
+        previousSearchResults.add(active.pos());
+        return findSearchTarget(mc, active.query(), previousSearchResults);
+    }
+
+    public boolean canFindNext() {
+        return active != null && active.kind() == TargetKind.SEARCH;
+    }
+
+    private Optional<Target> findSearchTarget(Minecraft mc, String query, Set<BlockPos> excluded) {
         if (mc.player == null || mc.level == null) return Optional.empty();
 
         List<Suggestion> matches = suggestions(query, 12);
         if (matches.isEmpty()) return Optional.empty();
 
         Block wanted = matches.get(0).block();
+        ResourceLocation wantedId = ForgeRegistries.BLOCKS.getKey(wanted);
         BlockPos player = mc.player.blockPosition();
         BlockPos best = null;
         double bestDistance = Double.MAX_VALUE;
@@ -87,6 +108,7 @@ public final class WayfinderManager {
                             for (int x = 0; x < 16; x++) {
                                 if (!section.getBlockState(x, y, z).is(wanted)) continue;
                                 BlockPos pos = new BlockPos((cx << 4) + x, baseY + y, (cz << 4) + z);
+                                if (excluded.contains(pos)) continue;
                                 double distance = player.distSqr(pos);
                                 if (distance < bestDistance) {
                                     bestDistance = distance;
@@ -101,7 +123,8 @@ public final class WayfinderManager {
 
         if (best == null) return Optional.empty();
         BlockPos approach = approachPosition(mc, best);
-        Target target = new Target(wanted, displayName(wanted), best.immutable(), approach, Math.sqrt(bestDistance));
+        Target target = new Target(TargetKind.SEARCH, query, displayName(wanted), wantedId,
+            mc.level.dimension().location().toString(), best.immutable(), approach, Math.sqrt(bestDistance));
         active = target;
         return Optional.of(target);
     }
@@ -166,7 +189,7 @@ public final class WayfinderManager {
 
     public Optional<Target> active() { return Optional.ofNullable(active); }
 
-    public void clear() { active = null; }
+    public void clear() { active = null; previousSearchResults = Set.of(); }
 
     public String describe(Target target, BlockPos player) {
         int dy = target.pos().getY() - player.getY();
@@ -192,6 +215,17 @@ public final class WayfinderManager {
         return value.toLowerCase(Locale.ROOT).replace('_', ' ').replace("minecraft:", "").trim();
     }
 
+    public enum TargetKind { SEARCH, REFERENCE }
+
     public record Suggestion(Block block, String name, ResourceLocation id) {}
-    public record Target(Block block, String name, BlockPos pos, BlockPos approach, double distance) {}
+    public record Target(
+        TargetKind kind,
+        String query,
+        String name,
+        ResourceLocation blockId,
+        String dimension,
+        BlockPos pos,
+        BlockPos approach,
+        double distance
+    ) {}
 }
