@@ -2,6 +2,8 @@ package dev.dwoodard.voxelpilot.ui;
 
 import dev.dwoodard.voxelpilot.ai.CommandProcessor;
 import dev.dwoodard.voxelpilot.ai.PaletteHistory;
+import dev.dwoodard.voxelpilot.ai.PaletteSuggestion;
+import dev.dwoodard.voxelpilot.ai.PaletteUsage;
 import dev.dwoodard.voxelpilot.build.BuildExecutor;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
@@ -22,12 +24,8 @@ public final class CommandPaletteScreen extends Screen {
 
     private EditBox input;
     private String status = "Type what you want VoxelPilot to do";
-    private List<String> suggestions = List.of();
+    private List<PaletteSuggestion> suggestions = List.of();
     private int selected;
-    // Shell-style Up/Down command recall over past submitted inputs (PaletteHistory's
-    // "you" entries). -1 means "not currently browsing history".
-    private int historyIndex = -1;
-    private String draftBeforeHistory = "";
     private List<WayfinderManager.Suggestion> wayfinderSuggestions = List.of();
 
     public CommandPaletteScreen() { super(Component.literal("VoxelPilot")); }
@@ -39,7 +37,7 @@ public final class CommandPaletteScreen extends Screen {
         int y = Math.max(30, height / 5);
         input = new EditBox(font, x + 16, y + 16, w - 32, 24, Component.literal("Ask VoxelPilot"));
         input.setMaxLength(500);
-        input.setHint(Component.literal("Build, modify, confirm, move, inspect…"));
+        input.setHint(Component.literal("/ action   @ reference   or type what you want…"));
         input.setResponder(value -> { selected = 0; updateSuggestions(value); });
         addRenderableWidget(input);
         setInitialFocus(input);
@@ -48,74 +46,104 @@ public final class CommandPaletteScreen extends Screen {
 
     private void updateSuggestions(String query) {
         String trimmed = query.trim();
+
+        // @ is a composable reference token. Start with facts the client knows directly:
+        // online players. Places/designations can join this provider later without changing
+        // the palette interaction contract.
+        int at = query.lastIndexOf('@');
+        if (at >= 0 && (at == 0 || Character.isWhitespace(query.charAt(at - 1)))) {
+            String needle = query.substring(at + 1).trim();
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.getConnection() != null) {
+                suggestions = PaletteUsage.get().rank(
+                    mc.getConnection().getOnlinePlayers().stream()
+                        .map(info -> {
+                            String name = info.getProfile().getName();
+                            return new PaletteSuggestion("@" + name, "@" + name, "PLAYER");
+                        }).toList(),
+                    "@" + needle,
+                    6);
+                return;
+            }
+        }
+
         if (trimmed.toLowerCase(Locale.ROOT).startsWith("/wayfinder")) {
             String targetQuery = trimmed.length() > 10 ? trimmed.substring(10).trim() : "";
-            wayfinderSuggestions = WayfinderManager.get().suggestions(targetQuery, 6);
-            suggestions = wayfinderSuggestions.stream().map(s -> s.name() + "  ·  " + s.id()).toList();
+            wayfinderSuggestions = WayfinderManager.get().suggestions(targetQuery, 12);
+            suggestions = PaletteUsage.get().rank(
+                wayfinderSuggestions.stream()
+                    .map(s -> new PaletteSuggestion(s.name() + "  ·  " + s.id(), "/wayfinder " + s.id(), "VOXEL PILOT"))
+                    .toList(),
+                trimmed,
+                6);
             return;
         }
 
         wayfinderSuggestions = List.of();
-        List<String> items = new ArrayList<>();
+        List<PaletteSuggestion> items = new ArrayList<>();
         if (GhostPreviewManager.get().hasPreview()) {
-            items.add("confirm preview");
-            items.add("make the preview taller");
-            items.add("move me somewhere I can see the whole build");
-            items.add("cancel preview");
+            items.add(local("confirm preview"));
+            items.add(local("make the preview taller"));
+            items.add(local("cancel preview"));
         } else if (BuildExecutor.get().active()) {
-            items.add(BuildExecutor.get().paused() ? "resume build" : "pause build");
-            items.add("speed fast");
-            items.add("speed normal");
-            items.add("cancel preview");
+            items.add(local(BuildExecutor.get().paused() ? "resume build" : "pause build"));
+            items.add(local("speed fast"));
+            items.add(local("speed normal"));
         } else if (SelectionManager.get().box().isPresent()) {
-            items.add("build a medieval barn in this area");
-            items.add("analyze this area before building");
-            items.add("flatten this area");
-            items.add("clear selection");
+            items.add(local("build a medieval barn in this area"));
+            items.add(local("analyze this area before building"));
+            items.add(local("flatten this area"));
+            items.add(local("clear selection"));
         } else {
-            items.add("/wayfinder diamond");
-            items.add("build something where I'm looking");
-            items.add("finish this structure");
-            items.add("move me somewhere with a better view");
-            items.add("undo build");
+            items.add(new PaletteSuggestion("/wayfinder diamond", "/wayfinder diamond", "VOXEL PILOT"));
+            items.add(local("build something where I'm looking"));
+            items.add(local("finish this structure"));
+            items.add(local("undo build"));
         }
-        items.add("speed slow");
-        items.add("speed normal");
-        items.add("speed fast");
-        items.add("speed instant");
-        items.add("settings");
+        items.add(local("speed slow"));
+        items.add(local("speed normal"));
+        items.add(local("speed fast"));
+        items.add(local("speed instant"));
+        items.add(local("settings"));
 
-        String needle = query.toLowerCase(Locale.ROOT).trim();
-        suggestions = items.stream().filter(s -> needle.isEmpty() || s.toLowerCase(Locale.ROOT).contains(needle)).distinct().limit(6).toList();
+        // Successful/recent user inputs become candidates instead of taking over Up/Down.
+        // Slash entries are especially useful until server Brigadier completion is wired in.
+        for (PaletteHistory.Entry entry : PaletteHistory.get().entries()) {
+            if (!"you".equals(entry.who())) continue;
+            String value = entry.text().trim();
+            if (value.isEmpty()) continue;
+            if (trimmed.startsWith("/") && !value.startsWith("/")) continue;
+            items.add(new PaletteSuggestion(value, value, "RECENT"));
+        }
+
+        suggestions = PaletteUsage.get().rank(items, trimmed, 6);
+    }
+
+    private static PaletteSuggestion local(String value) {
+        return new PaletteSuggestion(value, value, "VOXEL PILOT");
+    }
+
+    private void acceptSuggestion() {
+        if (suggestions.isEmpty()) return;
+        PaletteSuggestion suggestion = suggestions.get(Math.min(selected, suggestions.size() - 1));
+        String value = suggestion.value();
+
+        // Replace only the active @ token so references compose with commands and prose.
+        int at = input.getValue().lastIndexOf('@');
+        if (value.startsWith("@") && at >= 0) {
+            input.setValue(input.getValue().substring(0, at) + value);
+        } else {
+            input.setValue(value);
+        }
+        input.setCursorPosition(input.getValue().length());
     }
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if ((keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN) && !wayfinderSuggestions.isEmpty()) {
+        if ((keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN) && !suggestions.isEmpty()) {
             selected = keyCode == GLFW.GLFW_KEY_UP
                 ? (selected - 1 + suggestions.size()) % suggestions.size()
                 : (selected + 1) % suggestions.size();
-            return true;
-        }
-        if (keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN) {
-            List<String> pastCommands = PaletteHistory.get().entries().stream()
-                .filter(e -> "you".equals(e.who())).map(PaletteHistory.Entry::text).toList();
-            if (!pastCommands.isEmpty()) {
-                if (keyCode == GLFW.GLFW_KEY_UP) {
-                    if (historyIndex == -1) draftBeforeHistory = input.getValue();
-                    historyIndex = historyIndex == -1 ? pastCommands.size() - 1 : Math.max(0, historyIndex - 1);
-                    input.setValue(pastCommands.get(historyIndex));
-                } else if (historyIndex != -1) {
-                    if (historyIndex < pastCommands.size() - 1) {
-                        historyIndex++;
-                        input.setValue(pastCommands.get(historyIndex));
-                    } else {
-                        historyIndex = -1;
-                        input.setValue(draftBeforeHistory);
-                    }
-                }
-                input.setCursorPosition(input.getValue().length());
-            }
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_L && (modifiers & (GLFW.GLFW_MOD_SUPER | GLFW.GLFW_MOD_CONTROL)) != 0) {
@@ -123,35 +151,34 @@ public final class CommandPaletteScreen extends Screen {
             dev.dwoodard.voxelpilot.build.GhostPreviewManager.get().clear();
             PaletteHistory.get().clear();
             dev.dwoodard.voxelpilot.ai.RecentHistory.get().clear();
-            historyIndex = -1;
             status = "Reset · preview, chat, and AI history cleared";
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_TAB && !suggestions.isEmpty()) {
-            input.setValue(wayfinderSuggestions.isEmpty()
-                ? suggestions.get(selected)
-                : "/wayfinder " + wayfinderSuggestions.get(selected).id());
-            input.setCursorPosition(input.getValue().length());
+            acceptSuggestion();
             return true;
         }
         // Cmd+Shift+Enter confirms the preview from inside the palette too, whatever is typed.
         boolean cmd = (modifiers & (GLFW.GLFW_MOD_SUPER | GLFW.GLFW_MOD_CONTROL)) != 0;
         if ((keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) && cmd && (modifiers & GLFW.GLFW_MOD_SHIFT) != 0) {
             status = "Working…";
-            historyIndex = -1;
             CommandProcessor.run(Minecraft.getInstance(), "confirm", value -> status = value);
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
             String command = input.getValue().trim();
-            if (!wayfinderSuggestions.isEmpty() && selected < wayfinderSuggestions.size()) {
-                command = "/wayfinder " + wayfinderSuggestions.get(selected).id();
-            } else if (command.isEmpty() && !suggestions.isEmpty()) command = suggestions.get(selected);
+            if (command.isEmpty() && !suggestions.isEmpty()) command = suggestions.get(selected).value();
+
+            // A selected @ reference completes the token; it is not itself an action.
+            if (!suggestions.isEmpty() && suggestions.get(Math.min(selected, suggestions.size() - 1)).value().startsWith("@")) {
+                acceptSuggestion();
+                return true;
+            }
             if (!command.isEmpty()) {
                 String finalCommand = command;
+                PaletteUsage.get().record(finalCommand);
                 status = "Working…";
-                historyIndex = -1;
-                // A bug in command handling must never take the game down with it.
+                    // A bug in command handling must never take the game down with it.
                 try {
                     CommandProcessor.run(Minecraft.getInstance(), finalCommand, value -> status = value);
                 } catch (RuntimeException | Error e) {
@@ -203,7 +230,10 @@ public final class CommandPaletteScreen extends Screen {
         for (int i = 0; i < suggestions.size(); i++) {
             int bg = i == selected ? 0xFF2B3035 : 0x00151515;
             graphics.fill(x + 10, sy + i * 22, x + w - 10, sy + i * 22 + 20, bg);
-            graphics.drawString(font, suggestions.get(i), x + 18, sy + i * 22 + 6, 0xFFE8EAED, false);
+            PaletteSuggestion suggestion = suggestions.get(i);
+            graphics.drawString(font, suggestion.label(), x + 18, sy + i * 22 + 6, 0xFFE8EAED, false);
+            int sourceWidth = font.width(suggestion.source());
+            graphics.drawString(font, suggestion.source(), x + w - 18 - sourceWidth, sy + i * 22 + 6, 0xFF777D84, false);
         }
         super.render(graphics, mouseX, mouseY, partialTick);
     }
