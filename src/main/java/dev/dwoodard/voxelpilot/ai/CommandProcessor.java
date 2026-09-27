@@ -4,9 +4,10 @@ import dev.dwoodard.voxelpilot.bridge.BridgeServer;
 import dev.dwoodard.voxelpilot.build.BuildExecutor;
 import dev.dwoodard.voxelpilot.build.BuildSpeed;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
-import dev.dwoodard.voxelpilot.build.MoveService;
 import dev.dwoodard.voxelpilot.build.PreviewMover;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
+import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
+import dev.dwoodard.voxelpilot.reference.ReferenceStore;
 import dev.dwoodard.voxelpilot.selection.StructureSelector;
 import dev.dwoodard.voxelpilot.ui.SettingsScreen;
 import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
@@ -43,6 +44,25 @@ public final class CommandProcessor {
 
         PaletteHistory.get().addUser(input);
         Consumer<String> reply = value -> { PaletteHistory.get().addAssistant(value); status.accept(value); };
+
+        if (input.startsWith("#") && !input.contains(" ")) {
+            ReferenceStore.get().designate(mc, input.substring(1))
+                .ifPresentOrElse(
+                    place -> reply.accept("Designated @" + place.name() + " · " + place.position().getX() + ", "
+                        + place.position().getY() + ", " + place.position().getZ()),
+                    () -> reply.accept("Could not create designation")
+                );
+            return;
+        }
+
+        if (input.startsWith("@") && !input.contains(" ")) {
+            ReferenceResolver.resolve(mc, input.substring(1))
+                .ifPresentOrElse(
+                    reference -> reply.accept(reference.promptContext().replace("\n", " · ")),
+                    () -> reply.accept(input + " is unknown")
+                );
+            return;
+        }
 
         if (lower.equals("/wayfinder") || lower.equals("/wayfinder cancel") || lower.equals("/wayfinder clear")) {
             WayfinderManager.get().clear();
@@ -161,13 +181,10 @@ public final class CommandProcessor {
             AiPlanner.Outcome outcome = new AiPlanner.Outcome(plan, build.resolved(), build.frame(), build.skipped());
             history.finish(plan.script, describe(outcome));
             if (outcome.resolved() == null) {
-                // Nothing to preview - either a move request, or the model correctly
-                // recognized this wasn't a build request and replied conversationally.
-                if (plan.suggestedMove != null && lower.startsWith("move me")) {
-                    var target = outcome.frame().toWorld((int) Math.floor(plan.suggestedMove.x),
-                        (int) Math.floor(plan.suggestedMove.y), (int) Math.floor(plan.suggestedMove.z));
-                    var move = MoveService.move(mc, target.getX() + 0.5, target.getY(), target.getZ() + 0.5);
-                    reply.accept(move.message());
+                // AI may suggest movement, but suggestions never directly mutate player state.
+                // Movement needs its own explicit deterministic/authorized capability.
+                if (plan.suggestedMove != null) {
+                    reply.accept("Movement suggested but not executed");
                 } else {
                     reply.accept(plan.message == null || plan.message.isBlank() ? "No changes needed" : plan.message);
                 }
