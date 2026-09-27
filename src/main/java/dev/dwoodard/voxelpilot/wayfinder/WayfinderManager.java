@@ -85,9 +85,19 @@ public final class WayfinderManager {
         }
 
         if (best == null) return Optional.empty();
-        Target target = new Target(wanted, displayName(wanted), best.immutable(), Math.sqrt(bestDistance));
+        BlockPos approach = approachPosition(mc, best);
+        Target target = new Target(wanted, displayName(wanted), best.immutable(), approach, Math.sqrt(bestDistance));
         active = target;
         return Optional.of(target);
+    }
+
+    private static BlockPos approachPosition(Minecraft mc, BlockPos target) {
+        // V1 approach is the walkable surface at the target's X/Z. Keeping this separate
+        // from the exact target lets the renderer guide like an aircraft approach now and
+        // lets terrain-aware routing choose a better arrival point later.
+        int surfaceY = mc.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,
+            target.getX(), target.getZ());
+        return new BlockPos(target.getX(), surfaceY, target.getZ());
     }
 
     public Optional<Target> active() { return Optional.ofNullable(active); }
@@ -97,9 +107,11 @@ public final class WayfinderManager {
     public String describe(Target target, BlockPos player) {
         int dy = target.pos().getY() - player.getY();
         String vertical = dy == 0 ? "same level" : Math.abs(dy) + " " + (dy > 0 ? "above" : "below");
+        int approachDepth = target.approach().getY() - target.pos().getY();
         return target.name() + " · " + Math.round(target.distance()) + " blocks · "
             + target.pos().getX() + ", " + target.pos().getY() + ", " + target.pos().getZ()
-            + " · " + vertical;
+            + " · " + vertical
+            + (approachDepth > 0 ? " · approach ↓" + approachDepth : "");
     }
 
     private static String displayName(Block block) {
@@ -117,5 +129,5 @@ public final class WayfinderManager {
     }
 
     public record Suggestion(Block block, String name, ResourceLocation id) {}
-    public record Target(Block block, String name, BlockPos pos, double distance) {}
+    public record Target(Block block, String name, BlockPos pos, BlockPos approach, double distance) {}
 }
