@@ -1,0 +1,121 @@
+package dev.dwoodard.voxelpilot.wayfinder;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraftforge.registries.ForgeRegistries;
+
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
+
+public final class WayfinderManager {
+    private static final WayfinderManager INSTANCE = new WayfinderManager();
+    private static final int SEARCH_CHUNK_RADIUS = 8;
+
+    private Target active;
+
+    private WayfinderManager() {}
+
+    public static WayfinderManager get() { return INSTANCE; }
+
+    public List<Suggestion> suggestions(String query, int limit) {
+        String needle = normalize(query);
+        if (needle.isBlank()) return List.of();
+
+        return ForgeRegistries.BLOCKS.getValues().stream()
+            .map(block -> new Suggestion(block, displayName(block), ForgeRegistries.BLOCKS.getKey(block)))
+            .filter(s -> {
+                String name = normalize(s.name());
+                String id = s.id() == null ? "" : normalize(s.id().toString());
+                return name.contains(needle) || id.contains(needle);
+            })
+            .sorted(Comparator
+                .comparingInt((Suggestion s) -> matchRank(normalize(s.name()), needle))
+                .thenComparing(Suggestion::name))
+            .limit(limit)
+            .toList();
+    }
+
+    public Optional<Target> findNearest(Minecraft mc, String query) {
+        if (mc.player == null || mc.level == null) return Optional.empty();
+
+        List<Suggestion> matches = suggestions(query, 12);
+        if (matches.isEmpty()) return Optional.empty();
+
+        Block wanted = matches.get(0).block();
+        BlockPos player = mc.player.blockPosition();
+        BlockPos best = null;
+        double bestDistance = Double.MAX_VALUE;
+
+        int playerChunkX = player.getX() >> 4;
+        int playerChunkZ = player.getZ() >> 4;
+
+        for (int cx = playerChunkX - SEARCH_CHUNK_RADIUS; cx <= playerChunkX + SEARCH_CHUNK_RADIUS; cx++) {
+            for (int cz = playerChunkZ - SEARCH_CHUNK_RADIUS; cz <= playerChunkZ + SEARCH_CHUNK_RADIUS; cz++) {
+                if (!mc.level.hasChunk(cx, cz)) continue;
+                LevelChunk chunk = mc.level.getChunk(cx, cz);
+                LevelChunkSection[] sections = chunk.getSections();
+
+                for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+                    LevelChunkSection section = sections[sectionIndex];
+                    if (section == null || section.hasOnlyAir() || !section.maybeHas(state -> state.is(wanted))) continue;
+
+                    int baseY = SectionPos.sectionToBlockCoord(mc.level.getSectionYFromSectionIndex(sectionIndex));
+                    for (int y = 0; y < 16; y++) {
+                        for (int z = 0; z < 16; z++) {
+                            for (int x = 0; x < 16; x++) {
+                                if (!section.getBlockState(x, y, z).is(wanted)) continue;
+                                BlockPos pos = new BlockPos((cx << 4) + x, baseY + y, (cz << 4) + z);
+                                double distance = player.distSqr(pos);
+                                if (distance < bestDistance) {
+                                    bestDistance = distance;
+                                    best = pos;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (best == null) return Optional.empty();
+        Target target = new Target(wanted, displayName(wanted), best.immutable(), Math.sqrt(bestDistance));
+        active = target;
+        return Optional.of(target);
+    }
+
+    public Optional<Target> active() { return Optional.ofNullable(active); }
+
+    public void clear() { active = null; }
+
+    public String describe(Target target, BlockPos player) {
+        int dy = target.pos().getY() - player.getY();
+        String vertical = dy == 0 ? "same level" : Math.abs(dy) + " " + (dy > 0 ? "above" : "below");
+        return target.name() + " · " + Math.round(target.distance()) + " blocks · "
+            + target.pos().getX() + ", " + target.pos().getY() + ", " + target.pos().getZ()
+            + " · " + vertical;
+    }
+
+    private static String displayName(Block block) {
+        return block.getName().getString();
+    }
+
+    private static int matchRank(String value, String needle) {
+        if (value.equals(needle)) return 0;
+        if (value.startsWith(needle)) return 1;
+        return 2;
+    }
+
+    private static String normalize(String value) {
+        return value.toLowerCase(Locale.ROOT).replace('_', ' ').replace("minecraft:", "").trim();
+    }
+
+    public record Suggestion(Block block, String name, ResourceLocation id) {}
+    public record Target(Block block, String name, BlockPos pos, double distance) {}
+}
