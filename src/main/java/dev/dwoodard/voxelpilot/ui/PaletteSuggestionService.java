@@ -3,6 +3,7 @@ package dev.dwoodard.voxelpilot.ui;
 import com.mojang.brigadier.ParseResults;
 import com.mojang.brigadier.suggestion.Suggestion;
 import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
+import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
 import net.minecraft.client.Minecraft;
 import net.minecraft.commands.SharedSuggestionProvider;
 
@@ -89,15 +90,11 @@ public final class PaletteSuggestionService {
     private static List<Item> referenceSuggestions(Minecraft mc, String input, Token token) {
         if (mc.getConnection() == null) return List.of();
 
-        String needle = token.text().substring(1).toLowerCase(Locale.ROOT);
-        return mc.getConnection().getOnlinePlayers().stream()
-            .map(info -> info.getProfile().getName())
-            .filter(name -> needle.isBlank() || name.toLowerCase(Locale.ROOT).startsWith(needle))
-            .sorted(String.CASE_INSENSITIVE_ORDER)
-            .limit(8)
-            .map(name -> {
-                String completed = input.substring(0, token.start()) + "@" + name + input.substring(token.end());
-                return new Item(completed, "@" + name, Source.REFERENCE);
+        String needle = token.text().substring(1);
+        return ReferenceResolver.matchingPlayers(mc, needle, 8).stream()
+            .map(reference -> {
+                String completed = input.substring(0, token.start()) + reference.token() + input.substring(token.end());
+                return new Item(completed, reference.paletteLabel(), Source.REFERENCE);
             })
             .toList();
     }
