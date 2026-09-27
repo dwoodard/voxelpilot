@@ -210,11 +210,9 @@ public final class CommandPaletteScreen extends Screen {
 
     @Override public boolean isPauseScreen() { return false; }
 
-    // Esc (or Cmd+K again) goes straight back to the game, even if the Inspector was open
-    // underneath; only Cmd+Shift+K brings the Inspector back.
+    // Esc or Cmd+K returns directly to the game.
     @Override
     public void onClose() {
-        dev.dwoodard.voxelpilot.client.ClientEvents.inspectorOpen = false;
         Minecraft.getInstance().setScreen(null);
     }
 }
