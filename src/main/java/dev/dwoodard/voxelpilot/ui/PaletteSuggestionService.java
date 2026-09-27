@@ -22,8 +22,12 @@ public final class PaletteSuggestionService {
     private PaletteSuggestionService() {}
 
     public static void suggestions(Minecraft mc, String input, Consumer<List<Item>> callback) {
+        suggestions(mc, input, input == null ? 0 : input.length(), callback);
+    }
+
+    public static void suggestions(Minecraft mc, String input, int cursor, Consumer<List<Item>> callback) {
         String value = input == null ? "" : input;
-        Token token = activeToken(value);
+        Token token = activeToken(value, cursor);
 
         if (token.text().startsWith("@")) {
             callback.accept(referenceSuggestions(mc, value, token));
@@ -130,11 +134,13 @@ public final class PaletteSuggestionService {
         return score;
     }
 
-    private static Token activeToken(String input) {
-        int cursor = input.length();
-        int start = cursor;
+    private static Token activeToken(String input, int cursor) {
+        int safeCursor = Math.max(0, Math.min(cursor, input.length()));
+        int start = safeCursor;
+        int end = safeCursor;
         while (start > 0 && !Character.isWhitespace(input.charAt(start - 1))) start--;
-        return new Token(start, cursor, input.substring(start, cursor));
+        while (end < input.length() && !Character.isWhitespace(input.charAt(end))) end++;
+        return new Token(start, end, input.substring(start, end));
     }
 
     private record Token(int start, int end, String text) {}
