@@ -121,11 +121,13 @@ public final class CommandPaletteScreen extends Screen {
         if (suggestions.isEmpty()) return;
         PaletteSuggestionService.Item suggestion = suggestions.get(Math.min(selected, suggestions.size() - 1));
         String value = suggestion.value();
+        String before = input.getValue();
+        int cursor = input.getCursorPosition();
 
         // Suggestion values already contain the complete input with only the active token
         // replaced, so references and server-command arguments remain composable.
         input.setValue(value);
-        input.setCursorPosition(input.getValue().length());
+        input.setCursorPosition(Math.max(0, Math.min(value.length(), cursor + value.length() - before.length())));
     }
 
     @Override
@@ -191,6 +193,11 @@ public final class CommandPaletteScreen extends Screen {
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+            if (actionReference == null && !suggestions.isEmpty()
+                && suggestions.get(Math.min(selected, suggestions.size() - 1)).source() == PaletteSuggestionService.Source.REFERENCE) {
+                openReferenceActions();
+                return true;
+            }
             if (actionReference != null && !suggestions.isEmpty()) {
                 runReferenceAction(suggestions.get(Math.min(selected, suggestions.size() - 1)).value());
                 return true;
