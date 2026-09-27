@@ -84,6 +84,9 @@ public final class PaletteSuggestionService {
         if ("/shortcuts".startsWith(lower)) {
             items.add(new Item("/shortcuts", "/shortcuts  ·  keyboard shortcuts", Source.VOXELPILOT));
         }
+        if ("/wayfinder next".startsWith(lower)) {
+            items.add(new Item("/wayfinder next", "/wayfinder next  ·  next search result", Source.VOXELPILOT));
+        }
         if ("/wayfinder".startsWith(lower) || lower.startsWith("/wayfinder")) {
             if (lower.startsWith("/wayfinder")) {
                 String query = input.length() > 10 ? input.substring(10).trim() : "";
