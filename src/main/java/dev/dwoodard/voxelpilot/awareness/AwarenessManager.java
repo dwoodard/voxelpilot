@@ -10,6 +10,7 @@ import java.util.Optional;
 
 public final class AwarenessManager {
     private static final AwarenessManager INSTANCE = new AwarenessManager();
+    private final TerrainAwarenessProvider terrain = new TerrainAwarenessProvider();
 
     private AwarenessManager() {}
 
@@ -51,7 +52,8 @@ public final class AwarenessManager {
                 horizontal,
                 approachDistance,
                 vertical,
-                relativeBearing
+                relativeBearing,
+                terrain.observe(mc, target.pos())
             );
         });
     }
@@ -70,6 +72,7 @@ public final class AwarenessManager {
         double horizontalDistance,
         double approachDistance,
         int verticalDistance,
-        double relativeBearing
+        double relativeBearing,
+        java.util.List<TerrainAwarenessProvider.Observation> observations
     ) {}
 }
