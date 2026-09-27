@@ -92,6 +92,21 @@ public final class CommandProcessor {
             return;
         }
 
+        if (lower.equals("/wayfinder next")) {
+            var target = WayfinderManager.get().findNext(mc);
+            if (target.isEmpty()) {
+                reply.accept(WayfinderManager.get().canFindNext()
+                    ? "No additional match detected in currently loaded chunks"
+                    : "Find Next requires an active Wayfinder search");
+            } else {
+                reply.accept(WayfinderManager.get().describe(target.get(), mc.player.blockPosition()));
+                mc.setScreen(null);
+                if (mc.player != null) mc.player.displayClientMessage(
+                    Component.literal("[VoxelPilot] Wayfinding to next " + target.get().name()), true);
+            }
+            return;
+        }
+
         if (lower.equals("/wayfinder") || lower.equals("/wayfinder cancel") || lower.equals("/wayfinder clear")) {
             WayfinderManager.get().clear();
             reply.accept(lower.equals("/wayfinder") ? "Usage: /wayfinder [block]" : "Wayfinder cleared");
@@ -103,7 +118,7 @@ public final class CommandProcessor {
                 ? WayfinderManager.get().followReference(mc, query)
                 : WayfinderManager.get().findNearest(mc, query);
             if (target.isEmpty()) {
-                reply.accept("No known " + query + " in currently loaded chunks");
+                reply.accept("No " + query + " detected in currently loaded chunks");
             } else {
                 reply.accept(WayfinderManager.get().describe(target.get(), mc.player.blockPosition()));
                 mc.setScreen(null);
