@@ -1,6 +1,7 @@
 package dev.dwoodard.voxelpilot.wayfinder;
 
 import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
+import dev.dwoodard.voxelpilot.reference.ObservationState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
@@ -22,6 +23,7 @@ public final class WayfinderManager {
 
     private Target active;
     private Set<BlockPos> previousSearchResults = Set.of();
+    private SearchCoverage lastSearchCoverage;
 
     private WayfinderManager() {}
 
@@ -94,10 +96,12 @@ public final class WayfinderManager {
 
         int playerChunkX = player.getX() >> 4;
         int playerChunkZ = player.getZ() >> 4;
+        int loadedChunks = 0;
 
         for (int cx = playerChunkX - SEARCH_CHUNK_RADIUS; cx <= playerChunkX + SEARCH_CHUNK_RADIUS; cx++) {
             for (int cz = playerChunkZ - SEARCH_CHUNK_RADIUS; cz <= playerChunkZ + SEARCH_CHUNK_RADIUS; cz++) {
                 if (!mc.level.hasChunk(cx, cz)) continue;
+                loadedChunks++;
                 LevelChunk chunk = mc.level.getChunk(cx, cz);
                 LevelChunkSection[] sections = chunk.getSections();
 
@@ -124,6 +128,12 @@ public final class WayfinderManager {
             }
         }
 
+        lastSearchCoverage = new SearchCoverage(
+            mc.level.dimension().location().toString(),
+            playerChunkX - SEARCH_CHUNK_RADIUS, playerChunkZ - SEARCH_CHUNK_RADIUS,
+            playerChunkX + SEARCH_CHUNK_RADIUS, playerChunkZ + SEARCH_CHUNK_RADIUS,
+            loadedChunks
+        );
         if (best == null) return Optional.empty();
         BlockPos approach = approachPosition(mc, best);
         Target target = new Target(TargetKind.SEARCH, query, displayName(wanted), wantedId,
@@ -193,6 +203,22 @@ public final class WayfinderManager {
 
     public Optional<Target> active() { return Optional.ofNullable(active); }
 
+    public ObservationState observationState(Minecraft mc, Target target) {
+        if (mc == null || mc.level == null || target == null || target.kind() != TargetKind.SEARCH
+            || target.blockId() == null) return ObservationState.UNKNOWN;
+        if (!mc.level.dimension().location().toString().equals(target.dimension())) return ObservationState.UNKNOWN;
+        if (!mc.level.hasChunkAt(target.pos())) return ObservationState.UNKNOWN;
+        ResourceLocation current = ForgeRegistries.BLOCKS.getKey(mc.level.getBlockState(target.pos()).getBlock());
+        return target.blockId().equals(current) ? ObservationState.PRESENT : ObservationState.NO_LONGER_PRESENT;
+    }
+
+    public String searchFailure(String query) {
+        if (lastSearchCoverage == null) return "No " + query + " detected; search coverage is unknown";
+        return "No " + query + " detected in " + lastSearchCoverage.loadedChunks()
+            + " loaded chunks within the searched " + lastSearchCoverage.widthChunks()
+            + "x" + lastSearchCoverage.depthChunks() + " chunk area";
+    }
+
     public void clear() { active = null; previousSearchResults = Set.of(); }
 
     public String describe(Target target, BlockPos player) {
@@ -222,6 +248,10 @@ public final class WayfinderManager {
     public enum TargetKind { SEARCH, REFERENCE }
 
     public record Suggestion(Block block, String name, ResourceLocation id) {}
+    public record SearchCoverage(String dimension, int minChunkX, int minChunkZ, int maxChunkX, int maxChunkZ, int loadedChunks) {
+        public int widthChunks() { return maxChunkX - minChunkX + 1; }
+        public int depthChunks() { return maxChunkZ - minChunkZ + 1; }
+    }
     public record Target(
         TargetKind kind,
         String query,
