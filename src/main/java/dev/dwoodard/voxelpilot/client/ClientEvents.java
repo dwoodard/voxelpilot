@@ -131,12 +131,6 @@ public final class ClientEvents {
         }
     }
 
-    private static void renderWayfinderMarker(PoseStack pose, VertexConsumer lines, Vec3 center, double radius) {
-        AABB marker = new AABB(center.x - radius, center.y - radius, center.z - radius,
-            center.x + radius, center.y + radius, center.z + radius);
-        LevelRenderer.renderLineBox(pose, lines, marker, 0.25F, 1.0F, 0.35F, 0.86F);
-    }
-
     private static void feedback(Minecraft mc) {
         if (mc.player != null) {
             mc.player.displayClientMessage(Component.literal("[VoxelPilot] Selection " + SelectionManager.get().dimensions()), true);
@@ -165,43 +159,11 @@ public final class ClientEvents {
             LevelRenderer.renderLineBox(pose, lines, box.aabb(), 0.95F, 0.75F, 0.15F, 1.0F));
 
         WayfinderManager.get().active().ifPresent(target -> {
-            if (mc.player == null) return;
-            Vec3 from = mc.player.position().add(0, 0.25, 0);
-            Vec3 approach = Vec3.atCenterOf(target.approach());
-            Vec3 horizontal = new Vec3(approach.x - from.x, 0, approach.z - from.z);
-            double distance = horizontal.length();
-
-            // Aircraft-style approach corridor: paired runway lights narrow toward the
-            // surface arrival point. This communicates "go there" without pretending V1
-            // knows a safe walkable path through every obstacle.
-            if (distance > 1.0) {
-                Vec3 forward = horizontal.normalize();
-                Vec3 right = new Vec3(-forward.z, 0, forward.x);
-                int gates = Math.min(12, Math.max(3, (int) Math.ceil(distance / 12.0)));
-                for (int i = 1; i <= gates; i++) {
-                    double t = (double) i / gates;
-                    Vec3 center = from.add(horizontal.scale(t));
-                    double halfWidth = 3.5 * (1.0 - t) + 0.65;
-                    double y = from.y + (approach.y - from.y) * t + 0.15;
-                    Vec3 left = new Vec3(center.x, y, center.z).add(right.scale(halfWidth));
-                    Vec3 rightMarker = new Vec3(center.x, y, center.z).subtract(right.scale(halfWidth));
-                    renderWayfinderMarker(pose, lines, left, 0.22);
-                    renderWayfinderMarker(pose, lines, rightMarker, 0.22);
-                }
-            }
-
-            // Surface approach marker and a vertical shaft line of sparse markers make
-            // underground depth obvious while preserving the exact x-ray target outline.
+            // Wayfinder designates locations; it does not claim a traversable route.
+            // Navigation belongs to the HUD layer, while world-space rendering stays
+            // limited to the safe approach and exact target.
             LevelRenderer.renderLineBox(pose, lines, new AABB(target.approach()).inflate(0.12),
                 0.25F, 1.0F, 0.35F, 1.0F);
-            int top = target.approach().getY();
-            int bottom = target.pos().getY();
-            if (top > bottom) {
-                for (int y = top - 3; y > bottom; y -= 4) {
-                    renderWayfinderMarker(pose, lines,
-                        new Vec3(target.pos().getX() + 0.5, y + 0.5, target.pos().getZ() + 0.5), 0.16);
-                }
-            }
             LevelRenderer.renderLineBox(pose, lines, new AABB(target.pos()).inflate(0.04),
                 0.25F, 1.0F, 0.35F, 1.0F);
         });
