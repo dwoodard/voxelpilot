@@ -9,6 +9,7 @@ import dev.dwoodard.voxelpilot.build.PreviewMover;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import dev.dwoodard.voxelpilot.selection.StructureSelector;
 import dev.dwoodard.voxelpilot.ui.SettingsScreen;
+import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 
@@ -42,6 +43,25 @@ public final class CommandProcessor {
 
         PaletteHistory.get().addUser(input);
         Consumer<String> reply = value -> { PaletteHistory.get().addAssistant(value); status.accept(value); };
+
+        if (lower.equals("/wayfinder") || lower.equals("/wayfinder cancel") || lower.equals("/wayfinder clear")) {
+            WayfinderManager.get().clear();
+            reply.accept(lower.equals("/wayfinder") ? "Usage: /wayfinder [block]" : "Wayfinder cleared");
+            return;
+        }
+        if (lower.startsWith("/wayfinder ")) {
+            String query = input.substring(input.indexOf(' ') + 1).trim();
+            var target = WayfinderManager.get().findNearest(mc, query);
+            if (target.isEmpty()) {
+                reply.accept("No known " + query + " in currently loaded chunks");
+            } else {
+                reply.accept(WayfinderManager.get().describe(target.get(), mc.player.blockPosition()));
+                mc.setScreen(null);
+                if (mc.player != null) mc.player.displayClientMessage(
+                    Component.literal("[VoxelPilot] Wayfinding to " + target.get().name()), true);
+            }
+            return;
+        }
 
         switch (lower) {
             // Short aliases so quick answers never reach the model.
