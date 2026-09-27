@@ -1,5 +1,6 @@
 package dev.dwoodard.voxelpilot.wayfinder;
 
+import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
@@ -40,6 +41,20 @@ public final class WayfinderManager {
                 .thenComparing(Suggestion::name))
             .limit(limit)
             .toList();
+    }
+
+    public Optional<Target> followReference(Minecraft mc, String token) {
+        if (mc == null || mc.player == null || token == null) return Optional.empty();
+        String name = token.startsWith("@") ? token.substring(1) : token;
+        var reference = ReferenceResolver.resolve(mc, name);
+        if (reference.isEmpty() || !reference.get().hasPosition()) return Optional.empty();
+        var ref = reference.get();
+        if (mc.level == null || !mc.level.dimension().location().toString().equals(ref.dimension())) return Optional.empty();
+        BlockPos pos = new BlockPos(ref.x(), ref.y(), ref.z());
+        double distance = Math.sqrt(mc.player.blockPosition().distSqr(pos));
+        Target target = new Target(null, ref.name(), pos, pos, distance);
+        active = target;
+        return Optional.of(target);
     }
 
     public Optional<Target> findNearest(Minecraft mc, String query) {
