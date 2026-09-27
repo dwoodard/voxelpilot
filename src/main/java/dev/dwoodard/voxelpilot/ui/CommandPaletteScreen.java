@@ -5,7 +5,6 @@ import dev.dwoodard.voxelpilot.ai.PaletteHistory;
 import dev.dwoodard.voxelpilot.build.BuildExecutor;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
-import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
@@ -52,13 +51,9 @@ public final class CommandPaletteScreen extends Screen {
         PaletteSuggestionService.Item suggestion = suggestions.get(Math.min(selected, suggestions.size() - 1));
         String value = suggestion.value();
 
-        // Replace only the active @ token so references compose with commands and prose.
-        int at = input.getValue().lastIndexOf('@');
-        if (value.startsWith("@") && at >= 0) {
-            input.setValue(input.getValue().substring(0, at) + value);
-        } else {
-            input.setValue(value);
-        }
+        // Suggestion values already contain the complete input with only the active token
+        // replaced, so references and server-command arguments remain composable.
+        input.setValue(value);
         input.setCursorPosition(input.getValue().length());
     }
 
