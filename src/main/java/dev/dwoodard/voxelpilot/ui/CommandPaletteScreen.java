@@ -5,6 +5,8 @@ import dev.dwoodard.voxelpilot.ai.PaletteHistory;
 import dev.dwoodard.voxelpilot.build.BuildExecutor;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
+import dev.dwoodard.voxelpilot.reference.ReferencePins;
+import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
@@ -51,6 +53,45 @@ public final class CommandPaletteScreen extends Screen {
         PaletteHistory.get().addAssistant(status);
     }
 
+    private void toggleSelectedReferencePin() {
+        Minecraft mc = Minecraft.getInstance();
+        String token = null;
+
+        if (!suggestions.isEmpty()) {
+            var item = suggestions.get(Math.min(selected, suggestions.size() - 1));
+            if (item.source() == PaletteSuggestionService.Source.REFERENCE) {
+                String[] parts = item.label().split("\\s+");
+                if (parts.length > 0 && parts[0].startsWith("@")) token = parts[0];
+            }
+        }
+
+        if (token == null) {
+            String value = input.getValue().trim();
+            if (value.startsWith("@") && !value.contains(" ")) token = value;
+        }
+
+        if (token == null) {
+            status = "Cmd+P requires a selected @reference";
+            return;
+        }
+
+        String resolvedToken = token;
+        var reference = ReferenceResolver.resolve(mc, resolvedToken.substring(1));
+        if (reference.isEmpty()) {
+            status = resolvedToken + " is unknown";
+            return;
+        }
+
+        String canonical = reference.get().token();
+        if (ReferencePins.get().isPinned(canonical)) {
+            ReferencePins.get().unpin(canonical);
+            status = "Unpinned " + canonical;
+        } else {
+            ReferencePins.get().pin(canonical);
+            status = "Pinned " + canonical + " to HUD";
+        }
+    }
+
     private void acceptSuggestion() {
         if (suggestions.isEmpty()) return;
         PaletteSuggestionService.Item suggestion = suggestions.get(Math.min(selected, suggestions.size() - 1));
@@ -76,6 +117,10 @@ public final class CommandPaletteScreen extends Screen {
             var shortcut = ShortcutRegistry.match(keyCode, shiftModifier);
             if (shortcut.isPresent()
                 && !(shortcut.get().key() == GLFW.GLFW_KEY_ENTER && shortcut.get().shift())) {
+                if (shortcut.get().key() == GLFW.GLFW_KEY_P) {
+                    toggleSelectedReferencePin();
+                    return true;
+                }
                 status = "Working…";
                 CommandProcessor.run(Minecraft.getInstance(), shortcut.get().command(), value -> status = value);
                 return true;
