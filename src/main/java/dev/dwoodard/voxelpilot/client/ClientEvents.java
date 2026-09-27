@@ -50,6 +50,18 @@ public final class ClientEvents {
             return;
         }
 
+        if (event.getAction() == GLFW.GLFW_PRESS && command && key == GLFW.GLFW_KEY_SLASH) {
+            BridgeServer.get().ensureRunning();
+            if (mc.screen instanceof CommandPaletteScreen palette) {
+                palette.showShortcuts();
+            } else {
+                CommandPaletteScreen palette = new CommandPaletteScreen();
+                mc.setScreen(palette);
+                palette.showShortcuts();
+            }
+            return;
+        }
+
         if (event.getAction() == GLFW.GLFW_PRESS && command && key == GLFW.GLFW_KEY_COMMA) {
             if (mc.screen instanceof SettingsScreen settings) {
                 settings.onClose();
