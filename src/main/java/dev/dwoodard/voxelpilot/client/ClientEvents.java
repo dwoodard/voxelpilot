@@ -8,7 +8,6 @@ import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
 import dev.dwoodard.voxelpilot.build.PreviewMover;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import dev.dwoodard.voxelpilot.ui.CommandPaletteScreen;
-import dev.dwoodard.voxelpilot.ui.InspectorScreen;
 import dev.dwoodard.voxelpilot.ui.SettingsScreen;
 import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
 import net.minecraft.client.Minecraft;
@@ -25,11 +24,6 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import org.lwjgl.glfw.GLFW;
 
 public final class ClientEvents {
-    // Whether the Inspector should be showing. Cmd+Shift+K flips this. Opening the
-    // palette (Cmd+K) or Settings (Cmd+,) temporarily occupies the one Minecraft Screen
-    // slot on top of it; their onClose() hands control back to the Inspector if this is true.
-    public static boolean inspectorOpen;
-
     // Agents (MCP, scripts) can connect as soon as a world is open, not only after Cmd+K.
     @SubscribeEvent
     public void onLogin(ClientPlayerNetworkEvent.LoggingIn event) {
@@ -47,12 +41,7 @@ public final class ClientEvents {
         boolean command = (mods & GLFW.GLFW_MOD_SUPER) != 0 || (mods & GLFW.GLFW_MOD_CONTROL) != 0;
 
         if (event.getAction() == GLFW.GLFW_PRESS && command && key == GLFW.GLFW_KEY_K) {
-            if (shift) {
-                inspectorOpen = !inspectorOpen;
-                if (!(mc.screen instanceof CommandPaletteScreen) && !(mc.screen instanceof SettingsScreen)) {
-                    mc.setScreen(inspectorOpen ? new InspectorScreen() : null);
-                }
-            } else if (mc.screen instanceof CommandPaletteScreen palette) {
+            if (mc.screen instanceof CommandPaletteScreen palette) {
                 palette.onClose();
             } else {
                 BridgeServer.get().ensureRunning();
