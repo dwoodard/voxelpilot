@@ -92,42 +92,51 @@ public final class WayfinderManager {
     }
 
     private static BlockPos approachPosition(Minecraft mc, BlockPos target) {
-        // Prefer the surface directly above the target, but only when a standing player
-        // fits: solid/supporting floor plus two blocks of collision-free body/head space.
-        // If that column is blocked (tree, roof, etc.), expand outward to the nearest
-        // player-sized surface approach instead of placing an unusable marker.
-        final int maxRadius = 8;
-        for (int radius = 0; radius <= maxRadius; radius++) {
-            BlockPos best = null;
-            double bestDistance = Double.MAX_VALUE;
+        // Underground targets use an offset entry so Wayfinder never visually suggests
+        // standing directly above the objective and digging straight down.
+        int directSurfaceY = mc.level.getHeight(
+            net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,
+            target.getX(), target.getZ());
+        int depth = directSurfaceY - target.getY();
+        boolean underground = depth > 4;
 
+        int minRadius = underground ? 6 : 0;
+        int maxRadius = underground ? 12 : 8;
+        BlockPos player = mc.player.blockPosition();
+        BlockPos best = null;
+        double bestScore = Double.MAX_VALUE;
+
+        for (int radius = minRadius; radius <= maxRadius; radius++) {
             for (int dx = -radius; dx <= radius; dx++) {
                 for (int dz = -radius; dz <= radius; dz++) {
                     if (radius > 0 && Math.max(Math.abs(dx), Math.abs(dz)) != radius) continue;
 
                     int x = target.getX() + dx;
                     int z = target.getZ() + dz;
-                    int y = mc.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, x, z);
+                    int y = mc.level.getHeight(
+                        net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, x, z);
                     BlockPos feet = new BlockPos(x, y, z);
-
                     if (!canPlayerStandAt(mc, feet)) continue;
 
-                    double distance = feet.distSqr(target);
-                    if (distance < bestDistance) {
-                        bestDistance = distance;
+                    // Prefer entries convenient to the player while keeping underground
+                    // targets deliberately offset from the target column.
+                    double playerDistance = feet.distSqr(player);
+                    double targetOffsetPenalty = Math.abs(Math.sqrt(
+                        target.distSqr(new BlockPos(x, target.getY(), z))) - 9.0) * 4.0;
+                    double score = playerDistance + targetOffsetPenalty;
+                    if (score < bestScore) {
+                        bestScore = score;
                         best = feet;
                     }
                 }
             }
-
-            if (best != null) return best.immutable();
         }
 
-        // Fallback keeps guidance available if no valid approach exists nearby. The
-        // renderer still treats this as directional guidance, not a guaranteed route.
-        int surfaceY = mc.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,
-            target.getX(), target.getZ());
-        return new BlockPos(target.getX(), surfaceY, target.getZ());
+        if (best != null) return best.immutable();
+
+        // Fallback preserves designation without claiming that the fallback is a safe
+        // descent route.
+        return new BlockPos(target.getX(), directSurfaceY, target.getZ());
     }
 
     private static boolean canPlayerStandAt(Minecraft mc, BlockPos feet) {
