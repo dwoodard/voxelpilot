@@ -91,7 +91,8 @@ public final class PaletteSuggestionService {
         if ("/wayfinder next".startsWith(lower)) {
             items.add(new Item("/wayfinder next", "/wayfinder next  ·  next search result", Source.VOXELPILOT));
         }
-        if ("/wayfinder".startsWith(lower) || lower.startsWith("/wayfinder")) {
+        if (!lower.startsWith("/wayfinder next")
+            && ("/wayfinder".startsWith(lower) || lower.startsWith("/wayfinder"))) {
             if (lower.startsWith("/wayfinder")) {
                 String query = input.length() > 10 ? input.substring(10).trim() : "";
                 for (WayfinderManager.Suggestion suggestion : WayfinderManager.get().suggestions(query, 8)) {
