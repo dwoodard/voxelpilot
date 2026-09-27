@@ -27,6 +27,15 @@ public final class ReferencePins {
         return tokens.removeIf(existing -> existing.equalsIgnoreCase(normalized));
     }
 
+    public synchronized boolean isPinned(String token) {
+        String normalized = normalize(token);
+        return tokens.stream().anyMatch(existing -> existing.equalsIgnoreCase(normalized));
+    }
+
+    public synchronized boolean toggle(String token) {
+        return isPinned(token) ? !unpin(token) : pin(token);
+    }
+
     public synchronized List<String> tokens() {
         return List.copyOf(tokens);
     }
