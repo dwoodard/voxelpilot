@@ -1,7 +1,6 @@
 package dev.dwoodard.voxelpilot.ai;
 
 import com.google.gson.*;
-import dev.dwoodard.voxelpilot.VoxelPilot;
 import dev.dwoodard.voxelpilot.config.ProviderConfig;
 
 import java.net.URI;
@@ -89,17 +88,14 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
         }
         body.add("tools", tools);
 
-        String requestBody = GSON.toJson(body);
-        VoxelPilot.LOGGER.info("Provider: request body ({} chars): {}", requestBody.length(), requestBody);
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri("/chat/completions"))
             .header("Content-Type", "application/json")
             .header("Accept", "text/event-stream")
             .timeout(Duration.ofSeconds(120))
-            .POST(HttpRequest.BodyPublishers.ofString(requestBody));
+            .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body)));
         auth(builder);
 
         return HTTP.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofLines()).thenApplyAsync(response -> {
-            VoxelPilot.LOGGER.info("Provider: response status={}, headers={}", response.statusCode(), response.headers().map());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 String error;
                 try (Stream<String> lines = response.body()) { error = lines.collect(Collectors.joining("\n")); }
@@ -110,16 +106,8 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
             String finish = null;
             JsonArray toolCalls = new JsonArray();
             long started = System.currentTimeMillis();
-            // Temporary diagnostic: keep the last few raw chunks so a failure can show what
-            // the server actually sent, since local providers don't always match the OpenAI
-            // tool-calling wire format exactly.
-            java.util.ArrayDeque<String> rawTail = new java.util.ArrayDeque<>();
-            int lineCount = 0;
             try (Stream<String> lines = response.body()) {
                 for (String line : (Iterable<String>) lines::iterator) {
-                    lineCount++;
-                    if (rawTail.size() >= 5) rawTail.removeFirst();
-                    rawTail.addLast(line);
                     if (!line.startsWith("data:")) continue;
                     String data = line.substring(5).trim();
                     if (data.equals("[DONE]")) break;
@@ -174,8 +162,6 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
             }
 
             if (splitter.text().isBlank()) {
-                VoxelPilot.LOGGER.warn("Empty answer: finish={}, toolCalls={}, lineCount={}, last lines={}",
-                    finish, toolCalls, lineCount, rawTail);
                 throw new IllegalStateException(sawReasoning
                     ? "Model only produced reasoning and no answer; try a non-thinking model"
                     : "Model returned an empty answer");
