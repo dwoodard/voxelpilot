@@ -9,10 +9,12 @@ import dev.dwoodard.voxelpilot.build.PreviewMover;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import dev.dwoodard.voxelpilot.ui.CommandPaletteScreen;
 import dev.dwoodard.voxelpilot.ui.SettingsScreen;
+import dev.dwoodard.voxelpilot.wayfinder.PathRenderer;
 import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.phys.AABB;
@@ -24,10 +26,29 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import org.lwjgl.glfw.GLFW;
 
 public final class ClientEvents {
+    private static final int PATH_UPDATE_INTERVAL = 40;
+    private int tickCounter = 0;
+
     // Agents (MCP, scripts) can connect as soon as a world is open, not only after Cmd+K.
     @SubscribeEvent
     public void onLogin(ClientPlayerNetworkEvent.LoggingIn event) {
         BridgeServer.get().ensureRunning();
+    }
+
+    @SubscribeEvent
+    public void onClientTick(net.minecraftforge.api.distmarker.Dist.ClientTickEvent event) {
+        if (event.phase != net.minecraftforge.fml.common.TickType.PHASE) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || mc.player == null) return;
+
+        tickCounter++;
+        if (tickCounter >= PATH_UPDATE_INTERVAL) {
+            tickCounter = 0;
+            var target = WayfinderManager.get().active();
+            if (target.isPresent()) {
+                WayfinderManager.get().recomputePath(mc, target.get());
+            }
+        }
     }
 
     @SubscribeEvent
@@ -163,12 +184,22 @@ public final class ClientEvents {
             // Long-distance navigation belongs to the HUD. X-ray world markers are
             // precision aids only, otherwise they become permanent visual clutter.
             if (mc.player != null && mc.player.blockPosition().distSqr(target.pos()) <= 32 * 32) {
-                LevelRenderer.renderLineBox(pose, lines, new AABB(target.approach()).inflate(0.12),
-                    0.25F, 1.0F, 0.35F, 1.0F);
+                int dy = target.pos().getY() - mc.player.blockPosition().getY();
+                boolean isUnderground = dy < -5;
+                float r = isUnderground ? 0.35F : 0.25F;
+                float g = isUnderground ? 0.50F : 1.0F;
+                float b = isUnderground ? 0.75F : 0.35F;
                 LevelRenderer.renderLineBox(pose, lines, new AABB(target.pos()).inflate(0.04),
-                    0.25F, 1.0F, 0.35F, 1.0F);
+                    r, g, b, 1.0F);
             }
         });
+
+        for (BlockPos waypoint : WayfinderManager.get().waypoints()) {
+            if (mc.player != null && mc.player.blockPosition().distSqr(waypoint) <= 32 * 32) {
+                LevelRenderer.renderLineBox(pose, lines, new AABB(waypoint).inflate(0.08),
+                    1.0F, 0.8F, 0.2F, 0.8F);
+            }
+        }
 
         var changes = GhostPreviewManager.get().changes();
         int stride = changes.size() > 5000 ? Math.max(1, changes.size() / 5000) : 1;
@@ -182,5 +213,7 @@ public final class ClientEvents {
 
         buffers.endBatch(XrayRenderType.LINES);
         pose.popPose();
+
+        PathRenderer.render(pose, buffers, mc);
     }
 }

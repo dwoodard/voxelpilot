@@ -13,6 +13,7 @@ import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraftforge.registries.ForgeRegistries;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -26,6 +27,7 @@ public final class WayfinderManager {
     private Target active;
     private Set<BlockPos> previousSearchResults = Set.of();
     private SearchCoverage lastSearchCoverage;
+    private List<BlockPos> waypoints = List.of();
 
     private WayfinderManager() {}
 
@@ -59,7 +61,8 @@ public final class WayfinderManager {
         BlockPos pos = new BlockPos(ref.x(), ref.y(), ref.z());
         double distance = Math.sqrt(mc.player.blockPosition().distSqr(pos));
         Target target = new Target(TargetKind.REFERENCE, ref.token(), ref.name(), null,
-            ref.dimension(), pos, pos, distance);
+            ref.dimension(), pos, pos, distance, List.of());
+        computePathAsync(mc, target);
         previousSearchResults = Set.of();
         active = target;
         return Optional.of(target);
@@ -67,6 +70,7 @@ public final class WayfinderManager {
 
     public Optional<Target> findNearest(Minecraft mc, String query) {
         previousSearchResults = Set.of();
+        clearWaypoints();
         return findSearchTarget(mc, query, previousSearchResults, true);
     }
 
@@ -163,7 +167,8 @@ public final class WayfinderManager {
         if (best == null) return Optional.empty();
         BlockPos approach = approachPosition(mc, best);
         Target target = new Target(TargetKind.SEARCH, query, displayName(wanted), wantedId,
-            mc.level.dimension().location().toString(), best.immutable(), approach, Math.sqrt(bestDistance));
+            mc.level.dimension().location().toString(), best.immutable(), approach, Math.sqrt(bestDistance), List.of());
+        computePathAsync(mc, target);
         return Optional.of(target);
     }
 
@@ -206,7 +211,8 @@ public final class WayfinderManager {
         ResourceLocation entityId = ForgeRegistries.ENTITY_TYPES.getKey(best.getType());
 
         Target target = new Target(TargetKind.SEARCH, query, displayName, entityId,
-            mc.level.dimension().location().toString(), entityPos, approach, Math.sqrt(bestDistance));
+            mc.level.dimension().location().toString(), entityPos, approach, Math.sqrt(bestDistance), List.of());
+        computePathAsync(mc, target);
         return Optional.of(target);
     }
 
@@ -271,6 +277,17 @@ public final class WayfinderManager {
 
     public Optional<Target> active() { return Optional.ofNullable(active); }
 
+    public List<BlockPos> waypoints() { return waypoints; }
+
+    public void addWaypoint(BlockPos pos) {
+        if (!waypoints.contains(pos)) {
+            waypoints = new ArrayList<>(waypoints);
+            waypoints.add(pos);
+        }
+    }
+
+    public void clearWaypoints() { waypoints = List.of(); }
+
     public ObservationState observationState(Minecraft mc, Target target) {
         if (mc == null || mc.level == null || target == null || target.kind() != TargetKind.SEARCH
             || target.blockId() == null) return ObservationState.UNKNOWN;
@@ -295,16 +312,71 @@ public final class WayfinderManager {
             + "x" + lastSearchCoverage.depthChunks() + " chunk area";
     }
 
-    public void clear() { active = null; previousSearchResults = Set.of(); }
+    public void clear() {
+        active = null;
+        previousSearchResults = Set.of();
+        clearWaypoints();
+    }
+
+    private void computePathAsync(Minecraft mc, Target target) {
+        Thread thread = new Thread(() -> {
+            if (mc.player == null) return;
+            BlockPos playerPos = mc.player.blockPosition();
+            System.out.println("[VoxelPilot] Pathfinding: " + playerPos + " -> " + target.approach());
+            var path = PathfindingEngine.findPath(mc, playerPos, target.approach(), 1000);
+            System.out.println("[VoxelPilot] Path result: " + (path.isEmpty() ? "empty" : path.get().size() + " waypoints"));
+            if (path.isPresent() && active == target) {
+                System.out.println("[VoxelPilot] Updating active target with path");
+                List<BlockPos> pathList = path.get();
+                active = new Target(target.kind(), target.query(), target.name(), target.blockId(),
+                    target.dimension(), target.pos(), target.approach(), target.distance(), pathList);
+
+                if (!pathList.isEmpty()) {
+                    BlockPos lastWaypoint = pathList.get(pathList.size() - 1);
+                    if (!lastWaypoint.equals(target.approach())) {
+                        addWaypoint(lastWaypoint);
+                    }
+                }
+            } else {
+                System.out.println("[VoxelPilot] Not updating: path.isPresent=" + path.isPresent() + ", active==target=" + (active == target));
+            }
+        });
+        thread.setName("VoxelPilot-Pathfinding");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    public void recomputePath(Minecraft mc, Target target) {
+        if (mc.player == null || !active().map(t -> t == target).orElse(false)) return;
+
+        Thread thread = new Thread(() -> {
+            if (mc.player == null) return;
+            BlockPos playerPos = mc.player.blockPosition();
+            var path = PathfindingEngine.findPath(mc, playerPos, target.approach(), 1000);
+            if (path.isPresent() && active == target) {
+                List<BlockPos> pathList = path.get();
+                active = new Target(target.kind(), target.query(), target.name(), target.blockId(),
+                    target.dimension(), target.pos(), target.approach(), target.distance(), pathList);
+
+                if (!pathList.isEmpty()) {
+                    BlockPos lastWaypoint = pathList.get(pathList.size() - 1);
+                    if (!lastWaypoint.equals(target.approach())) {
+                        if (!waypoints.contains(lastWaypoint)) {
+                            addWaypoint(lastWaypoint);
+                        }
+                    }
+                }
+            }
+        });
+        thread.setName("VoxelPilot-PathUpdate");
+        thread.setDaemon(true);
+        thread.start();
+    }
 
     public String describe(Target target, BlockPos player) {
         int dy = target.pos().getY() - player.getY();
-        String vertical = dy == 0 ? "same level" : Math.abs(dy) + " " + (dy > 0 ? "above" : "below");
-        int approachDepth = target.approach().getY() - target.pos().getY();
-        return target.name() + " · " + Math.round(target.distance()) + " blocks · "
-            + target.pos().getX() + ", " + target.pos().getY() + ", " + target.pos().getZ()
-            + " · " + vertical
-            + (approachDepth > 0 ? " · approach ↓" + approachDepth : "");
+        String depthIndicator = dy == 0 ? "" : (dy > 0 ? " ⬆ " : " ⬇ ") + Math.abs(dy);
+        return target.name() + " · " + Math.round(target.distance()) + "m" + depthIndicator;
     }
 
     private static String displayName(Block block) {
@@ -336,6 +408,7 @@ public final class WayfinderManager {
         String dimension,
         BlockPos pos,
         BlockPos approach,
-        double distance
+        double distance,
+        List<BlockPos> path
     ) {}
 }

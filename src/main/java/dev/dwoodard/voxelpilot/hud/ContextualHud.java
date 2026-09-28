@@ -45,7 +45,8 @@ public final class ContextualHud {
         int dx = (int) Math.round(pos.getX() - mc.player.getX());
         int dy = (int) Math.round(pos.getY() - mc.player.getY());
         int dz = (int) Math.round(pos.getZ() - mc.player.getZ());
-        String detail = "Δ " + String.format("%3d/%3d/%3d", dx, dy, dz);
+        String depth = dy == 0 ? "" : (dy > 0 ? " ⬆ " : " ⬇ ") + Math.abs(dy);
+        String detail = "Δ " + String.format("%3d/%3d/%3d", dx, dy, dz) + depth;
 
         // Always reserve space for status icon (no jumping)
         if (isReached) detail += "  ✔";
