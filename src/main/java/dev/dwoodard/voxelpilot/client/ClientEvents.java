@@ -3,6 +3,7 @@ package dev.dwoodard.voxelpilot.client;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.dwoodard.voxelpilot.bridge.BridgeServer;
+import dev.dwoodard.voxelpilot.bridge.VoxelPilotMcpServer;
 import dev.dwoodard.voxelpilot.build.BuildExecutor;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
 import dev.dwoodard.voxelpilot.build.PreviewMover;
@@ -19,9 +20,12 @@ import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraftforge.api.distmarker.OnlyIn;
+import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
 import net.minecraftforge.client.event.InputEvent;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
+import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import org.lwjgl.glfw.GLFW;
 
@@ -33,11 +37,12 @@ public final class ClientEvents {
     @SubscribeEvent
     public void onLogin(ClientPlayerNetworkEvent.LoggingIn event) {
         BridgeServer.get().ensureRunning();
+        VoxelPilotMcpServer.get().ensureRunning();
     }
 
     @SubscribeEvent
-    public void onClientTick(net.minecraftforge.api.distmarker.Dist.ClientTickEvent event) {
-        if (event.phase != net.minecraftforge.fml.common.TickType.PHASE) return;
+    public void onClientTick(TickEvent.ClientTickEvent event) {
+        if (event.phase != TickEvent.Phase.END) return;
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) return;
 

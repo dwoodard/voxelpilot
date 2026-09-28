@@ -47,7 +47,34 @@ public final class PaletteSuggestionService {
             return;
         }
 
+        // "/" embedded in a sentence ("What does /trigger tpa do?") gets the same
+        // server-backed completion as a standalone command, spliced back into the
+        // surrounding text, as long as the cursor is still inside the command phrase.
+        int embeddedStart = embeddedCommandStart(value, cursor);
+        if (embeddedStart >= 0) {
+            String prefix = value.substring(0, embeddedStart);
+            String commandPhrase = value.substring(embeddedStart);
+            commandSuggestions(mc, commandPhrase, items -> callback.accept(withPrefix(prefix, items)));
+            return;
+        }
+
         callback.accept(contextSuggestions(value));
+    }
+
+    // Once the sentence continues past the command ("... do? Also is @Steve online"),
+    // Brigadier has no way to know where the command phrase ends, so this only fires
+    // while the cursor is still at the end of an in-progress "/..." phrase.
+    private static int embeddedCommandStart(String value, int cursor) {
+        if (cursor != value.length()) return -1;
+        int start = value.lastIndexOf('/');
+        if (start <= 0) return -1;
+        if (!Character.isWhitespace(value.charAt(start - 1))) return -1;
+        return start;
+    }
+
+    private static List<Item> withPrefix(String prefix, List<Item> items) {
+        if (prefix.isEmpty()) return items;
+        return items.stream().map(item -> new Item(prefix + item.value(), item.label(), item.source())).toList();
     }
 
     private static void commandSuggestions(Minecraft mc, String input, Consumer<List<Item>> callback) {

@@ -130,10 +130,22 @@ public final class ContextualHud {
                 && active.get().kind() == dev.dwoodard.voxelpilot.wayfinder.WayfinderManager.TargetKind.REFERENCE
                 && active.get().query().equalsIgnoreCase(reference.token())) continue;
 
-            // Unknown/stale spatial facts do not get a fake directional marker. Cmd-K is
-            // still the place to inspect them.
-            if (!reference.hasPosition()
-                || !mc.level.dimension().location().toString().equals(reference.dimension())) continue;
+            // Unknown/other-dimension facts get no directional marker (there's nothing to
+            // point at), but pinning something and having it vanish silently is worse than
+            // an honest "position unknown" label. Stack these in the left column with the
+            // directional pins.
+            if (!reference.hasPosition()) {
+                String line = reference.name().toUpperCase() + " · UNKNOWN";
+                gui.drawString(mc.font, line, 8, leftY, 0xFF8A9098, true);
+                leftY += 12;
+                continue;
+            }
+            if (!mc.level.dimension().location().toString().equals(reference.dimension())) {
+                String line = reference.name().toUpperCase() + " · OTHER DIMENSION";
+                gui.drawString(mc.font, line, 8, leftY, 0xFF8A9098, true);
+                leftY += 12;
+                continue;
+            }
 
             double dx = reference.x() - mc.player.getX();
             double dz = reference.z() - mc.player.getZ();

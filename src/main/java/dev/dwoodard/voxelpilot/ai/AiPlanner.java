@@ -1,5 +1,8 @@
 package dev.dwoodard.voxelpilot.ai;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import dev.dwoodard.voxelpilot.VoxelPilot;
 import dev.dwoodard.voxelpilot.bridge.BridgeServer;
 import dev.dwoodard.voxelpilot.build.Frame;
@@ -21,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 // Prompt -> streamed script -> live ghost. The model writes one short command per line;
 // each line is parsed, validated, and added to the draft preview the moment it arrives.
@@ -30,7 +34,7 @@ public final class AiPlanner {
     // Public (and a compile-time constant) so the offline model eval can use it without
     // loading Minecraft classes. Kept short: every token here is read on every request.
     public static final String SYSTEM_PROMPT = """
-        You plan Minecraft 1.20.1 builds as a short script. Reply ONLY with script lines, one command per line.
+        You plan Minecraft 1.20.1 builds as a short script. When you need information about the world (terrain, blocks, player state), use tools. Otherwise reply ONLY with script lines, one command per line.
         No markdown, no numbering, no explanations.
 
         Coordinates are integers: x = right, y = up, z = forward (away from the player).
@@ -89,8 +93,71 @@ public final class AiPlanner {
 
     private AiPlanner() {}
 
+    private static CompletableFuture<String> agenticLoop(Minecraft mc, List<ChatMessage> messages, int depth, Consumer<String> onLine) {
+        if (depth > 3) return CompletableFuture.failedFuture(new PlanException("Too many tool calls"));
+
+        return BridgeServer.get().stream(messages, onLine)
+            .thenCompose(text -> {
+                try {
+                    if (text == null || text.isBlank()) return CompletableFuture.failedFuture(new PlanException("Empty response"));
+
+                    JsonObject response = JsonParser.parseString(text).getAsJsonObject();
+                    JsonArray toolCalls = response.getAsJsonArray("tool_calls");
+                    VoxelPilot.LOGGER.info("Agentic loop depth={}, response={}, toolCalls={}", depth, text, toolCalls == null ? "null" : toolCalls.size());
+
+                    if (toolCalls != null && toolCalls.size() > 0) {
+                        List<ChatMessage> nextMessages = new ArrayList<>(messages);
+                        ToolExecutor executor = ToolExecutor.create(mc);
+
+                        // Add assistant message with the tool calls
+                        nextMessages.add(ChatMessage.assistantWithTools(toolCalls));
+
+                        for (int i = 0; i < toolCalls.size(); i++) {
+                            JsonObject call = toolCalls.get(i).getAsJsonObject();
+                            String toolName = call.has("function") ? call.getAsJsonObject("function").get("name").getAsString() : "";
+                            String argsStr = call.has("function") ? call.getAsJsonObject("function").get("arguments").getAsString() : "{}";
+                            String toolId = call.has("id") ? call.get("id").getAsString() : "call_" + i;
+
+                            JsonObject args = JsonParser.parseString(argsStr).getAsJsonObject();
+                            String result = executor.execute(toolName, args);
+                            VoxelPilot.LOGGER.info("Tool {} (id={}) returned: {}", toolName, toolId, result);
+                            nextMessages.add(ChatMessage.toolResult(result, toolId));
+                        }
+
+                        return agenticLoop(mc, nextMessages, depth + 1, onLine);
+                    }
+
+                    return CompletableFuture.completedFuture(text);
+                } catch (Exception e) {
+                    VoxelPilot.LOGGER.warn("Tool call error, treating as plain response", e);
+                    return CompletableFuture.completedFuture(text);
+                }
+            });
+    }
+
     public static CompletableFuture<Outcome> plan(Minecraft mc, String userPrompt) {
+        if ("list tools".equalsIgnoreCase(userPrompt.strip())) {
+            StringBuilder tools = new StringBuilder("say Available tools:\n");
+            for (ToolDefinition tool : ToolDefinition.all()) {
+                tools.append("say - ").append(tool.name()).append(": ").append(tool.description()).append("\n");
+            }
+            return handleToolListResponse(mc, tools.toString());
+        }
         return plan(mc, userPrompt, GameContext.capture(mc));
+    }
+
+    private static CompletableFuture<Outcome> handleToolListResponse(Minecraft mc, String toolList) {
+        Optional<Frame> frame = Frame.current(mc);
+        if (frame.isEmpty()) return CompletableFuture.failedFuture(new PlanException("Look at a block or select an area with J first"));
+
+        Session session = new Session(mc, frame.get());
+        for (String line : toolList.split("\n")) {
+            String trimmed = line.strip();
+            if (!trimmed.isEmpty()) session.accept(trimmed);
+        }
+        return mc.submit(() -> session.finish(null, "list tools")).thenApply(outcome ->
+            new Outcome(outcome.plan(), outcome.resolved(), outcome.frame(), outcome.skipped())
+        );
     }
 
     public static CompletableFuture<Outcome> plan(Minecraft mc, String userPrompt, GameContext gameContext) {
@@ -148,9 +215,7 @@ public final class AiPlanner {
 
         Session session = new Session(mc, frame.get());
         long started = System.currentTimeMillis();
-        return BridgeServer.get().stream(messages, line -> mc.execute(() -> session.accept(line)))
-            // Line callbacks are queued with mc.execute before this completes, so by the
-            // time the next step runs on the client thread every line has been applied.
+        return agenticLoop(mc, messages, 0, line -> mc.execute(() -> session.accept(line)))
             .thenCompose(text -> mc.submit(session::takeSkipped).thenCompose(rejected -> repair(mc, messages, session, text, rejected)))
             .thenCompose(text -> mc.submit(() -> {
                 VoxelPilot.LOGGER.info("VoxelPilot: script in {} ms\n{}", System.currentTimeMillis() - started, text);

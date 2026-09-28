@@ -10,6 +10,7 @@ public final class ProviderFactory {
         ProviderConfig c = ConfigStore.get();
         return switch (c.provider.toLowerCase()) {
             case "ollama" -> new OllamaProvider(c);
+            case "lm-studio" -> new LmStudioProvider(c);
             default -> new OpenAiCompatibleProvider(c);
         };
     }
