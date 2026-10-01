@@ -15,6 +15,7 @@ import dev.dwoodard.voxelpilot.ui.SettingsScreen;
 import dev.dwoodard.voxelpilot.ui.ShortcutRegistry;
 import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 
 import java.util.ArrayList;
@@ -30,18 +31,24 @@ public final class CommandProcessor {
         String lower = input.toLowerCase(Locale.ROOT);
         if (input.isBlank()) return;
 
-        if (lower.equals("clear chat")) {
+        // These wipe the chat log themselves, so they run before addUser()/reply() below and
+        // report through status.accept() directly -- otherwise the command we're about to
+        // clear would end up re-adding a line to the history it just emptied.
+        if (lower.equals("/clear chat")) {
             PaletteHistory.get().clear();
             RecentHistory.get().clear();
-            status.accept("Type what you want VoxelPilot to do");
+            status.accept("Chat cleared");
             return;
         }
-        // Full reset: ghost, chat, and everything the AI remembers. The selection stays.
-        if (lower.equals("cls") || lower.equals("reset") || lower.equals("clear all") || lower.equals("start over")) {
+        if (lower.equals("/clear") || lower.equals("/clear all")) {
+            if (BuildExecutor.get().active()) BuildExecutor.get().cancel();
             GhostPreviewManager.get().clear();
+            WayfinderManager.get().clear();
+            ReferencePins.get().clear();
+            SelectionManager.get().clear(mc);
             PaletteHistory.get().clear();
             RecentHistory.get().clear();
-            status.accept("Reset · preview, chat, and AI history cleared");
+            status.accept("Cleared · selection, preview, wayfinder, pins, chat, and AI history reset");
             return;
         }
 
@@ -79,6 +86,29 @@ public final class CommandProcessor {
             return;
         }
 
+        if (lower.equals("/clear selection")) {
+            SelectionManager.get().clear(mc);
+            reply.accept("Selection cleared");
+            return;
+        }
+        if (lower.equals("/clear preview")) {
+            if (BuildExecutor.get().active()) BuildExecutor.get().cancel();
+            GhostPreviewManager.get().clear();
+            RecentHistory.get().mark("cancelled");
+            reply.accept("Preview cleared");
+            return;
+        }
+        if (lower.equals("/clear wayfinder")) {
+            WayfinderManager.get().clear();
+            reply.accept("Wayfinder cleared");
+            return;
+        }
+        if (lower.equals("/clear pins")) {
+            ReferencePins.get().clear();
+            reply.accept("Pins cleared");
+            return;
+        }
+
         if (input.startsWith("#") && !input.contains(" ")) {
             ReferenceStore.get().designate(mc, input.substring(1))
                 .ifPresentOrElse(
@@ -113,6 +143,32 @@ public final class CommandProcessor {
             return;
         }
 
+        // Jumps to an exact position a Cmd-K preview suggestion already resolved, rather than
+        // re-running a text search that could land on a different match than the one selected.
+        if (lower.startsWith("/wayfinder at ")) {
+            String rest = input.substring(14).trim();
+            int coordsEnd = rest.indexOf(' ');
+            String coordsPart = coordsEnd < 0 ? rest : rest.substring(0, coordsEnd);
+            String name = coordsEnd < 0 ? "" : rest.substring(coordsEnd + 1).trim();
+            String[] coords = coordsPart.split(",");
+            if (coords.length != 3) { reply.accept("Usage: /wayfinder at X,Y,Z name"); return; }
+            try {
+                BlockPos pos = new BlockPos(Integer.parseInt(coords[0]), Integer.parseInt(coords[1]), Integer.parseInt(coords[2]));
+                var target = WayfinderManager.get().goTo(mc, name.isBlank() ? "target" : name, pos);
+                if (target.isEmpty()) {
+                    reply.accept("Could not set that as a Wayfinder target");
+                } else {
+                    reply.accept(WayfinderManager.get().describe(target.get(), mc.player.blockPosition()));
+                    mc.setScreen(null);
+                    if (mc.player != null) mc.player.displayClientMessage(
+                        Component.literal("[VoxelPilot] Wayfinding to " + target.get().name()), true);
+                }
+            } catch (NumberFormatException e) {
+                reply.accept("Usage: /wayfinder at X,Y,Z name");
+            }
+            return;
+        }
+
         if (lower.equals("/wayfinder") || lower.equals("/wayfinder cancel") || lower.equals("/wayfinder clear")) {
             WayfinderManager.get().clear();
             reply.accept(lower.equals("/wayfinder") ? "Usage: /wayfinder [block]" : "Wayfinder cleared");
@@ -139,7 +195,7 @@ public final class CommandProcessor {
         switch (lower) {
             // World mutation requires explicit preview confirmation. Conversational text such as
             // "yes", "go", or "do it" belongs to AI rather than acting as authorization.
-            case "confirm", "confirm preview" -> {
+            case "/confirm" -> {
                 BuildExecutor.get().confirm(mc).whenComplete((result, error) -> mc.execute(() -> {
                     if (error == null && result.ok()) RecentHistory.get().mark("confirmed");
                     else RecentHistory.get().mark("confirm failed: " + (error != null ? rootMessage(error) : result.message()));
@@ -147,23 +203,15 @@ public final class CommandProcessor {
                 }));
                 return;
             }
-            case "cancel preview", "clear preview", "clear ghost", "remove preview", "clear the preview" -> {
-                if (BuildExecutor.get().active()) BuildExecutor.get().cancel();
-                GhostPreviewManager.get().clear();
-                RecentHistory.get().mark("cancelled");
-                reply.accept("Cancelled");
-                return;
-            }
-            case "pause build" -> { BuildExecutor.get().pause(); reply.accept("Build paused"); return; }
-            case "resume build" -> { BuildExecutor.get().resume(); reply.accept("Build resumed"); return; }
-            case "undo build" -> {
+            case "/pause" -> { BuildExecutor.get().pause(); reply.accept("Build paused"); return; }
+            case "/resume" -> { BuildExecutor.get().resume(); reply.accept("Build resumed"); return; }
+            case "/undo" -> {
                 var result = BuildExecutor.get().undo(mc);
                 if (result.ok()) RecentHistory.get().mark("undone");
                 reply.accept(result.message());
                 return;
             }
-            case "clear selection" -> { SelectionManager.get().clear(mc); reply.accept("Selection cleared"); return; }
-            case "settings", "models", "configure" -> { mc.setScreen(new SettingsScreen()); return; }
+            case "/settings" -> { mc.setScreen(new SettingsScreen()); return; }
         }
 
         // Pointing is unambiguous, so it needs no model: grow from the crosshair.
@@ -210,8 +258,8 @@ public final class CommandProcessor {
             }
         }
 
-        if (lower.startsWith("speed ")) {
-            BuildSpeed speed = BuildSpeed.parse(lower.substring(6));
+        if (lower.startsWith("/speed ")) {
+            BuildSpeed speed = BuildSpeed.parse(lower.substring(7));
             BuildExecutor.get().setSpeed(speed);
             reply.accept("Build speed: " + speed.name().toLowerCase());
             return;

@@ -2,9 +2,6 @@ package dev.dwoodard.voxelpilot.ui;
 
 import dev.dwoodard.voxelpilot.ai.CommandProcessor;
 import dev.dwoodard.voxelpilot.ai.PaletteHistory;
-import dev.dwoodard.voxelpilot.build.BuildExecutor;
-import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
-import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import dev.dwoodard.voxelpilot.reference.ReferencePins;
 import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
 import net.minecraft.client.Minecraft;
@@ -24,6 +21,10 @@ public final class CommandPaletteScreen extends Screen {
     private List<PaletteSuggestionService.Item> suggestions = List.of();
     private int selected;
     private String actionReference;
+    // Non-empty while showing an actions submenu for the selected suggestion, whatever its
+    // source. Index-matched to `suggestions`: Enter runs pendingActions.get(selected).
+    private List<Runnable> pendingActions = List.of();
+    private int suggestionGeneration = 0;
     private int scrollLeftPane = 0;
     private int scrollRightPane = 0;
     private static String lastInput = "";
@@ -52,7 +53,12 @@ public final class CommandPaletteScreen extends Screen {
     }
 
     private void updateSuggestions(String query) {
+        int generation = ++suggestionGeneration;
         PaletteSuggestionService.suggestions(Minecraft.getInstance(), query, input == null ? query.length() : input.getCursorPosition(), items -> {
+            // "/" suggestions round-trip through Brigadier asynchronously; without this guard
+            // an older keystroke's completion can land after a newer one's and show stale
+            // suggestions (this is what made "/way" + Tab feel like it silently did nothing).
+            if (generation != suggestionGeneration) return;
             suggestions = items;
             if (selected >= suggestions.size()) selected = Math.max(0, suggestions.size() - 1);
         });
@@ -99,6 +105,19 @@ public final class CommandPaletteScreen extends Screen {
         return status;
     }
 
+    // Right/Enter drill into an actions submenu for whatever suggestion is selected,
+    // regardless of its source, so the arrow contract never depends on what kind of
+    // suggestion you're looking at.
+    private void openActionsForSelected() {
+        if (suggestions.isEmpty()) { status = "Nothing selected"; return; }
+        var item = suggestions.get(Math.min(selected, suggestions.size() - 1));
+        if (item.source() == PaletteSuggestionService.Source.REFERENCE) {
+            openReferenceActions();
+        } else {
+            openCommandActions(item);
+        }
+    }
+
     private void openReferenceActions() {
         String token = selectedReferenceToken();
         if (token == null) { status = "Select an @reference first"; return; }
@@ -113,13 +132,51 @@ public final class CommandPaletteScreen extends Screen {
                 (pinned ? "Unpin " : "Pin ") + actionReference, PaletteSuggestionService.Source.VOXELPILOT),
             new PaletteSuggestionService.Item(actionReference, "Inspect " + actionReference, PaletteSuggestionService.Source.VOXELPILOT)
         );
+        pendingActions = suggestions.stream().<Runnable>map(item -> () -> runReferenceAction(item.value())).toList();
         status = reference.get().paletteLabel();
+    }
+
+    // Commands/recent entries are already directly runnable (unlike a bare @reference), so
+    // their actions submenu offers a choice between running immediately and dropping the
+    // command back into the input to edit first -- mirrors what Tab already does, but reachable
+    // through the same Right-arrow gesture references use.
+    private void openCommandActions(PaletteSuggestionService.Item item) {
+        selected = 0;
+        String value = item.value();
+        suggestions = List.of(
+            new PaletteSuggestionService.Item(value, "Run " + item.label(), item.source()),
+            new PaletteSuggestionService.Item(value, "Insert only (edit before running)", item.source())
+        );
+        pendingActions = List.of(
+            (Runnable) () -> {
+                status = "Working…";
+                CommandProcessor.run(Minecraft.getInstance(), value, v -> status = v);
+                exitDrillDown();
+            },
+            (Runnable) () -> insertOnly(value)
+        );
+        status = item.label();
+    }
+
+    private void insertOnly(String value) {
+        suppressUpdateOnInputChange = true;
+        input.setValue(value);
+        input.setCursorPosition(value.length());
+        suppressUpdateOnInputChange = false;
+        exitDrillDown();
+        updateSuggestions(value);
+        status = "Inserted " + value;
     }
 
     private void runReferenceAction(String command) {
         status = "Working…";
         CommandProcessor.run(Minecraft.getInstance(), command, value -> status = value);
+        exitDrillDown();
+    }
+
+    private void exitDrillDown() {
         actionReference = null;
+        pendingActions = List.of();
     }
 
     private void toggleSelectedReferencePin() {
@@ -159,26 +216,16 @@ public final class CommandPaletteScreen extends Screen {
         input.setValue(value);
         input.setCursorPosition(Math.max(0, Math.min(value.length(), cursor + value.length() - before.length())));
         suppressUpdateOnInputChange = false;
+        // Same reset normal typing does: the freshly-refiltered list for the new text should
+        // highlight its own top match, not whatever index was selected in the old list.
+        selected = 0;
         updateSuggestions(value);
-    }
-
-    private void acceptSuggestionWithoutRefilter() {
-        if (suggestions.isEmpty()) return;
-        PaletteSuggestionService.Item suggestion = suggestions.get(Math.min(selected, suggestions.size() - 1));
-        String value = suggestion.value();
-        String before = input.getValue();
-        int cursor = input.getCursorPosition();
-
-        suppressUpdateOnInputChange = true;
-        input.setValue(value);
-        input.setCursorPosition(Math.max(0, Math.min(value.length(), cursor + value.length() - before.length())));
-        suppressUpdateOnInputChange = false;
     }
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (keyCode == GLFW.GLFW_KEY_ESCAPE && actionReference != null) {
-            actionReference = null;
+        if (keyCode == GLFW.GLFW_KEY_ESCAPE && !pendingActions.isEmpty()) {
+            exitDrillDown();
             selected = 0;
             updateSuggestions(input.getValue());
             status = "Type what you want VoxelPilot to do";
@@ -232,15 +279,11 @@ public final class CommandPaletteScreen extends Screen {
         }
 
         if (keyCode == GLFW.GLFW_KEY_L && (modifiers & (GLFW.GLFW_MOD_SUPER | GLFW.GLFW_MOD_CONTROL)) != 0) {
-            // Same as cls: ghost, chat, and AI history.
-            dev.dwoodard.voxelpilot.build.GhostPreviewManager.get().clear();
-            PaletteHistory.get().clear();
-            dev.dwoodard.voxelpilot.ai.RecentHistory.get().clear();
-            status = "Reset · preview, chat, and AI history cleared";
+            CommandProcessor.run(Minecraft.getInstance(), "/clear all", value -> status = value);
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_C && (modifiers & (GLFW.GLFW_MOD_SUPER | GLFW.GLFW_MOD_CONTROL)) != 0) {
-            actionReference = null;
+            exitDrillDown();
             selected = 0;
             scrollLeftPane = 0;
             scrollRightPane = 0;
@@ -251,30 +294,27 @@ public final class CommandPaletteScreen extends Screen {
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_TAB && !suggestions.isEmpty()) {
-            boolean shift = (modifiers & GLFW.GLFW_MOD_SHIFT) != 0;
-            acceptSuggestionWithoutRefilter();
-            if (shift) {
-                selected = (selected - 1 + suggestions.size()) % suggestions.size();
-            } else {
-                selected = (selected + 1) % suggestions.size();
-            }
+            acceptSuggestion();
             return true;
         }
         // Cmd+Shift+Enter confirms the preview from inside the palette too, whatever is typed.
         boolean cmd = (modifiers & (GLFW.GLFW_MOD_SUPER | GLFW.GLFW_MOD_CONTROL)) != 0;
         if ((keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) && cmd && (modifiers & GLFW.GLFW_MOD_SHIFT) != 0) {
             status = "Working…";
-            CommandProcessor.run(Minecraft.getInstance(), "confirm", value -> status = value);
+            CommandProcessor.run(Minecraft.getInstance(), "/confirm", value -> status = value);
             return true;
         }
         if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
-            if (actionReference == null && !suggestions.isEmpty()
+            // A bare @reference isn't itself runnable, so Enter on one drills into its
+            // actions instead of executing -- every other suggestion source is already
+            // directly executable and Enter just runs it below.
+            if (pendingActions.isEmpty() && !suggestions.isEmpty()
                 && suggestions.get(Math.min(selected, suggestions.size() - 1)).source() == PaletteSuggestionService.Source.REFERENCE) {
-                openReferenceActions();
+                openActionsForSelected();
                 return true;
             }
-            if (actionReference != null && !suggestions.isEmpty()) {
-                runReferenceAction(suggestions.get(Math.min(selected, suggestions.size() - 1)).value());
+            if (!pendingActions.isEmpty()) {
+                pendingActions.get(Math.min(selected, pendingActions.size() - 1)).run();
                 return true;
             }
             String command = input.getValue().trim();
@@ -299,14 +339,12 @@ public final class CommandPaletteScreen extends Screen {
             }
             return true;
         }
-        if (keyCode == GLFW.GLFW_KEY_RIGHT && !suggestions.isEmpty()) {
-            if (suggestions.get(Math.min(selected, suggestions.size() - 1)).source() == PaletteSuggestionService.Source.REFERENCE) {
-                openReferenceActions();
-                return true;
-            }
+        if (keyCode == GLFW.GLFW_KEY_RIGHT && pendingActions.isEmpty() && !suggestions.isEmpty()) {
+            openActionsForSelected();
+            return true;
         }
-        if (keyCode == GLFW.GLFW_KEY_LEFT && actionReference != null) {
-            actionReference = null;
+        if (keyCode == GLFW.GLFW_KEY_LEFT && !pendingActions.isEmpty()) {
+            exitDrillDown();
             selected = 0;
             updateSuggestions(input.getValue());
             status = "Type what you want VoxelPilot to do";
@@ -352,9 +390,13 @@ public final class CommandPaletteScreen extends Screen {
             int bg = i == selected ? 0xFF2B3035 : 0x00151515;
             graphics.fill(x + 2, renderY, x + w - 2, renderY + 20, bg);
             PaletteSuggestionService.Item suggestion = suggestions.get(i);
-            String label = suggestion.label();
-            label = stripNamespace(label);
-            if (label.length() > 25) label = label.substring(0, 22) + "…";
+            String label = stripNamespace(suggestion.label());
+            int maxWidth = w - 12;
+            // Truncate by actual pixel width, not a fixed character count, so the label uses
+            // however much of the pane it actually has instead of always cutting at 25 chars.
+            if (font.width(label) > maxWidth) {
+                label = font.plainSubstrByWidth(label, maxWidth - font.width("…")) + "…";
+            }
             graphics.drawString(font, label, x + 6, renderY + 6, 0xFFE8EAED, false);
         }
     }

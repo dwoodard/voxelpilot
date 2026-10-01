@@ -8,6 +8,7 @@ import net.minecraft.core.SectionPos;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -23,6 +24,7 @@ import java.util.Set;
 public final class WayfinderManager {
     private static final WayfinderManager INSTANCE = new WayfinderManager();
     private static final int SEARCH_CHUNK_RADIUS = 1000;
+    private static final int PREVIEW_CHUNK_RADIUS = 2;
 
     private Target active;
     private Set<BlockPos> previousSearchResults = Set.of();
@@ -68,6 +70,112 @@ public final class WayfinderManager {
         return Optional.of(target);
     }
 
+    // Jumps straight to a specific position a caller already knows about (e.g. one of
+    // previewNearby's candidates), rather than re-running a text search that might land on a
+    // different match than the one actually selected. blockId is null since there's nothing
+    // to "find again" here -- canFindNext()/findNext() already treat that as "no further match".
+    public Optional<Target> goTo(Minecraft mc, String name, BlockPos pos) {
+        if (mc == null || mc.player == null || mc.level == null) return Optional.empty();
+        BlockPos approach = approachPosition(mc, pos);
+        double distance = Math.sqrt(mc.player.blockPosition().distSqr(pos));
+        Target target = new Target(TargetKind.SEARCH, name, name, null,
+            mc.level.dimension().location().toString(), pos.immutable(), approach, distance, List.of());
+        computePathAsync(mc, target);
+        previousSearchResults = Set.of();
+        active = target;
+        return Optional.of(target);
+    }
+
+    // A cheap, small-radius scan for the live Cmd-K suggestion list while typing "/wayfinder
+    // <query>" -- unlike findNearest/findSearchTarget's full SEARCH_CHUNK_RADIUS scan (reserved
+    // for pressing Enter), this runs on every keystroke so it stays local and returns several
+    // candidates instead of just the closest one.
+    public List<PreviewMatch> previewNearby(Minecraft mc, String query, int limit) {
+        if (mc == null || mc.player == null || mc.level == null) return List.of();
+        String needle = normalize(query);
+        // Only once the typed text is a complete, resolved name (typed in full or reached via
+        // Tab) -- not a partial fragment like "dia" -- so the list doesn't flood with raw
+        // nearby matches before the player has actually said what they're looking for. This
+        // also makes backing out remove them for free: deleting a character back out of an
+        // exact match makes this fail again on the very next keystroke.
+        if (needle.isBlank() || !isResolvedName(needle)) return List.of();
+
+        BlockPos player = mc.player.blockPosition();
+        int playerChunkX = player.getX() >> 4;
+        int playerChunkZ = player.getZ() >> 4;
+
+        record Candidate(String name, BlockPos pos, double distSq) {}
+        List<Candidate> candidates = new ArrayList<>();
+
+        Set<Block> wantedBlocks = suggestions(query, 6).stream()
+            .map(Suggestion::block)
+            .collect(java.util.stream.Collectors.toSet());
+
+        for (int cx = playerChunkX - PREVIEW_CHUNK_RADIUS; cx <= playerChunkX + PREVIEW_CHUNK_RADIUS; cx++) {
+            for (int cz = playerChunkZ - PREVIEW_CHUNK_RADIUS; cz <= playerChunkZ + PREVIEW_CHUNK_RADIUS; cz++) {
+                if (!mc.level.hasChunk(cx, cz)) continue;
+                LevelChunk chunk = mc.level.getChunk(cx, cz);
+
+                if (!wantedBlocks.isEmpty()) {
+                    LevelChunkSection[] sections = chunk.getSections();
+                    for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+                        LevelChunkSection section = sections[sectionIndex];
+                        if (section == null || section.hasOnlyAir()) continue;
+                        int baseY = SectionPos.sectionToBlockCoord(mc.level.getSectionYFromSectionIndex(sectionIndex));
+                        for (int y = 0; y < 16; y++) {
+                            for (int z = 0; z < 16; z++) {
+                                for (int x = 0; x < 16; x++) {
+                                    Block block = section.getBlockState(x, y, z).getBlock();
+                                    if (!wantedBlocks.contains(block)) continue;
+                                    BlockPos pos = new BlockPos((cx << 4) + x, baseY + y, (cz << 4) + z);
+                                    candidates.add(new Candidate(displayName(block), pos, player.distSqr(pos)));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for (var blockEntity : chunk.getBlockEntities().values()) {
+                    if (!(blockEntity instanceof net.minecraft.world.Container container)) continue;
+                    BlockPos pos = blockEntity.getBlockPos();
+                    for (int slot = 0; slot < container.getContainerSize(); slot++) {
+                        var stack = container.getItem(slot);
+                        if (stack.isEmpty()) continue;
+                        ResourceLocation id = ForgeRegistries.ITEMS.getKey(stack.getItem());
+                        String itemPath = id == null ? "" : normalize(id.getPath());
+                        if (!itemPath.contains(needle) && !normalize(stack.getHoverName().getString()).contains(needle)) continue;
+                        String containerName = mc.level.getBlockState(pos).getBlock().getName().getString();
+                        candidates.add(new Candidate(stack.getHoverName().getString() + " (in " + containerName + ")", pos, player.distSqr(pos)));
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (Entity entity : mc.level.entitiesForRendering()) {
+            if (entity == mc.player) continue;
+            BlockPos pos = entity.blockPosition();
+            int cx = pos.getX() >> 4, cz = pos.getZ() >> 4;
+            if (Math.abs(cx - playerChunkX) > PREVIEW_CHUNK_RADIUS || Math.abs(cz - playerChunkZ) > PREVIEW_CHUNK_RADIUS) continue;
+            ResourceLocation entityTypeId = ForgeRegistries.ENTITY_TYPES.getKey(entity.getType());
+            if (entityTypeId == null || !normalize(entityTypeId.getPath()).contains(needle)) continue;
+            candidates.add(new Candidate(entity.getDisplayName().getString(), pos, player.distSqr(pos)));
+        }
+
+        return candidates.stream()
+            .sorted(Comparator.comparingDouble(Candidate::distSq))
+            .limit(limit)
+            .map(c -> {
+                var local = dev.dwoodard.voxelpilot.util.RelativeBearing.toLocal(mc,
+                    c.pos().getX() - player.getX(), c.pos().getZ() - player.getZ());
+                int right = (int) Math.round(local.right());
+                int forward = (int) Math.round(local.forward());
+                int up = c.pos().getY() - player.getY();
+                return new PreviewMatch(c.name(), c.pos(), right, forward, up, Math.sqrt(c.distSq()));
+            })
+            .toList();
+    }
+
     public Optional<Target> findNearest(Minecraft mc, String query) {
         previousSearchResults = Set.of();
         clearWaypoints();
@@ -101,14 +209,12 @@ public final class WayfinderManager {
 
         Optional<Target> blockTarget = findBlockTarget(mc, query, excluded, playerChunkX, playerChunkZ);
         Optional<Target> entityTarget = findEntityTarget(mc, query, playerChunkX, playerChunkZ);
+        Optional<Target> containerTarget = findContainerTarget(mc, query, excluded, playerChunkX, playerChunkZ);
 
         Optional<Target> best = Optional.empty();
-        if (blockTarget.isPresent() && entityTarget.isPresent()) {
-            best = blockTarget.get().distance() <= entityTarget.get().distance() ? blockTarget : entityTarget;
-        } else if (blockTarget.isPresent()) {
-            best = blockTarget;
-        } else if (entityTarget.isPresent()) {
-            best = entityTarget;
+        for (Optional<Target> candidate : List.of(blockTarget, entityTarget, containerTarget)) {
+            if (candidate.isEmpty()) continue;
+            if (best.isEmpty() || candidate.get().distance() < best.get().distance()) best = candidate;
         }
 
         if (best.isPresent() && activate) active = best.get();
@@ -167,6 +273,58 @@ public final class WayfinderManager {
         if (best == null) return Optional.empty();
         BlockPos approach = approachPosition(mc, best);
         Target target = new Target(TargetKind.SEARCH, query, displayName(wanted), wantedId,
+            mc.level.dimension().location().toString(), best.immutable(), approach, Math.sqrt(bestDistance), List.of());
+        computePathAsync(mc, target);
+        return Optional.of(target);
+    }
+
+    // Chests, barrels, shulker boxes, hoppers, dispensers, furnaces -- anything implementing
+    // Container. Only loaded chunks' block entities are checked (a small set per chunk, unlike
+    // scanning every block), so this stays cheap even at the full search radius.
+    private Optional<Target> findContainerTarget(Minecraft mc, String query, Set<BlockPos> excluded, int playerChunkX, int playerChunkZ) {
+        if (mc.player == null || mc.level == null) return Optional.empty();
+
+        String needle = normalize(query);
+        if (needle.isBlank()) return Optional.empty();
+
+        BlockPos player = mc.player.blockPosition();
+        BlockPos best = null;
+        double bestDistance = Double.MAX_VALUE;
+        net.minecraft.world.item.ItemStack bestStack = null;
+
+        for (int cx = playerChunkX - SEARCH_CHUNK_RADIUS; cx <= playerChunkX + SEARCH_CHUNK_RADIUS; cx++) {
+            for (int cz = playerChunkZ - SEARCH_CHUNK_RADIUS; cz <= playerChunkZ + SEARCH_CHUNK_RADIUS; cz++) {
+                if (!mc.level.hasChunk(cx, cz)) continue;
+                LevelChunk chunk = mc.level.getChunk(cx, cz);
+
+                for (var blockEntity : chunk.getBlockEntities().values()) {
+                    if (!(blockEntity instanceof net.minecraft.world.Container container)) continue;
+                    BlockPos pos = blockEntity.getBlockPos();
+                    if (excluded.contains(pos)) continue;
+                    double distance = player.distSqr(pos);
+                    if (distance >= bestDistance) continue;
+
+                    for (int slot = 0; slot < container.getContainerSize(); slot++) {
+                        var stack = container.getItem(slot);
+                        if (stack.isEmpty()) continue;
+                        ResourceLocation id = ForgeRegistries.ITEMS.getKey(stack.getItem());
+                        String itemPath = id == null ? "" : normalize(id.getPath());
+                        if (!itemPath.contains(needle) && !normalize(stack.getHoverName().getString()).contains(needle)) continue;
+                        bestDistance = distance;
+                        best = pos;
+                        bestStack = stack;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (best == null) return Optional.empty();
+        ResourceLocation itemId = ForgeRegistries.ITEMS.getKey(bestStack.getItem());
+        String containerName = mc.level.getBlockState(best).getBlock().getName().getString();
+        String name = bestStack.getHoverName().getString() + " (in " + containerName + ")";
+        BlockPos approach = approachPosition(mc, best);
+        Target target = new Target(TargetKind.SEARCH, query, name, itemId,
             mc.level.dimension().location().toString(), best.immutable(), approach, Math.sqrt(bestDistance), List.of());
         computePathAsync(mc, target);
         return Optional.of(target);
@@ -302,6 +460,18 @@ public final class WayfinderManager {
             if (target.blockId().equals(entityId)) return ObservationState.PRESENT;
         }
 
+        // A container match's blockId is the item, not the chest/barrel block itself, so the
+        // block-equality check above never applies to it -- look inside instead.
+        var blockEntity = mc.level.getBlockEntity(target.pos());
+        if (blockEntity instanceof net.minecraft.world.Container container) {
+            for (int slot = 0; slot < container.getContainerSize(); slot++) {
+                var stack = container.getItem(slot);
+                if (!stack.isEmpty() && target.blockId().equals(ForgeRegistries.ITEMS.getKey(stack.getItem()))) {
+                    return ObservationState.PRESENT;
+                }
+            }
+        }
+
         return ObservationState.NO_LONGER_PRESENT;
     }
 
@@ -383,6 +553,22 @@ public final class WayfinderManager {
         return block.getName().getString();
     }
 
+    // True once `needle` (already normalized) exactly names a real block or item -- by id path
+    // or display name -- rather than merely being a prefix/substring of one.
+    private static boolean isResolvedName(String needle) {
+        for (Block block : ForgeRegistries.BLOCKS.getValues()) {
+            if (normalize(displayName(block)).equals(needle)) return true;
+            ResourceLocation id = ForgeRegistries.BLOCKS.getKey(block);
+            if (id != null && normalize(id.getPath()).equals(needle)) return true;
+        }
+        for (Item item : ForgeRegistries.ITEMS.getValues()) {
+            ResourceLocation id = ForgeRegistries.ITEMS.getKey(item);
+            if (id != null && normalize(id.getPath()).equals(needle)) return true;
+            if (normalize(item.getDescription().getString()).equals(needle)) return true;
+        }
+        return false;
+    }
+
     private static int matchRank(String value, String needle) {
         if (value.equals(needle)) return 0;
         if (value.startsWith(needle)) return 1;
@@ -396,6 +582,7 @@ public final class WayfinderManager {
     public enum TargetKind { SEARCH, REFERENCE }
 
     public record Suggestion(Block block, String name, ResourceLocation id) {}
+    public record PreviewMatch(String name, BlockPos pos, int right, int forward, int up, double distance) {}
     public record SearchCoverage(String dimension, int minChunkX, int minChunkZ, int maxChunkX, int maxChunkZ, int loadedChunks) {
         public int widthChunks() { return maxChunkX - minChunkX + 1; }
         public int depthChunks() { return maxChunkZ - minChunkZ + 1; }

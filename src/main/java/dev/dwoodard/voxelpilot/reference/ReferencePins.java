@@ -40,6 +40,10 @@ public final class ReferencePins {
         return List.copyOf(tokens);
     }
 
+    public synchronized void clear() {
+        tokens.clear();
+    }
+
     private static String normalize(String token) {
         if (token == null) return "";
         String value = token.trim();

@@ -2,6 +2,8 @@ package dev.dwoodard.voxelpilot.ui;
 
 import com.mojang.brigadier.ParseResults;
 import com.mojang.brigadier.suggestion.Suggestion;
+import dev.dwoodard.voxelpilot.build.BuildSpeed;
+import dev.dwoodard.voxelpilot.util.RelativeBearing;
 import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
 import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
 import net.minecraft.client.Minecraft;
@@ -15,9 +17,23 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 public final class PaletteSuggestionService {
-    public enum Source { SERVER, REFERENCE, VOXELPILOT, RECENT }
+    public enum Source { SERVER, REFERENCE, VOXELPILOT, RECENT, PREVIEW }
 
     public record Item(String value, String label, Source source) {}
+
+    // Kept in sync with the "/clear ..." cases in CommandProcessor.
+    private static final List<String> CLEAR_TARGETS = List.of("all", "selection", "preview", "wayfinder", "pins", "chat");
+
+    // Kept in sync with the fixed-name cases in CommandProcessor's switch. LinkedHashMap so
+    // suggestions appear in a stable, deliberate order.
+    private static final Map<String, String> SIMPLE_COMMANDS = new LinkedHashMap<>();
+    static {
+        SIMPLE_COMMANDS.put("/confirm", "confirm the preview");
+        SIMPLE_COMMANDS.put("/undo", "undo the last build");
+        SIMPLE_COMMANDS.put("/pause", "pause the active build");
+        SIMPLE_COMMANDS.put("/resume", "resume a paused build");
+        SIMPLE_COMMANDS.put("/settings", "open settings");
+    }
 
     private PaletteSuggestionService() {}
 
@@ -78,10 +94,16 @@ public final class PaletteSuggestionService {
     }
 
     private static void commandSuggestions(Minecraft mc, String input, Consumer<List<Item>> callback) {
-        if (mc.getConnection() == null) {
-            callback.accept(voxelPilotCommands(input));
-            return;
-        }
+        // VoxelPilot's own commands and recent usage are computed synchronously -- surface them
+        // immediately so Tab/arrows are never waiting on a server round-trip just to see
+        // "/wayfinder" or "/clear". Real server commands only exist via Brigadier's async
+        // completion API, so those merge in a moment later, once resolved, as a second update.
+        Map<String, Item> local = new LinkedHashMap<>();
+        for (Item item : voxelPilotCommands(mc, input)) local.putIfAbsent(item.value(), item);
+        for (Item item : CommandUsageStore.get().matching(input, 12)) local.putIfAbsent(item.value(), item);
+        callback.accept(rank(local, input));
+
+        if (mc.getConnection() == null) return;
 
         String command = input.substring(1);
         var dispatcher = mc.getConnection().getCommands();
@@ -89,27 +111,25 @@ public final class PaletteSuggestionService {
         ParseResults<SharedSuggestionProvider> parsed = dispatcher.parse(command, source);
 
         dispatcher.getCompletionSuggestions(parsed).whenComplete((result, error) -> mc.execute(() -> {
-            Map<String, Item> merged = new LinkedHashMap<>();
-
+            Map<String, Item> merged = new LinkedHashMap<>(local);
             if (error == null && result != null) {
                 for (Suggestion suggestion : result.getList()) {
                     String completed = "/" + suggestion.apply(command);
                     merged.put(completed, new Item(completed, completed, Source.SERVER));
                 }
             }
-
-            for (Item item : voxelPilotCommands(input)) merged.putIfAbsent(item.value(), item);
-            for (Item item : CommandUsageStore.get().matching(input, 12)) merged.putIfAbsent(item.value(), item);
-
-            List<Item> ranked = merged.values().stream()
-                .sorted((a, b) -> Integer.compare(score(b, input), score(a, input)))
-                .limit(8)
-                .toList();
-            callback.accept(ranked);
+            callback.accept(rank(merged, input));
         }));
     }
 
-    private static List<Item> voxelPilotCommands(String input) {
+    private static List<Item> rank(Map<String, Item> items, String input) {
+        return items.values().stream()
+            .sorted((a, b) -> Integer.compare(score(b, input), score(a, input)))
+            .limit(8)
+            .toList();
+    }
+
+    private static List<Item> voxelPilotCommands(Minecraft mc, String input) {
         String lower = input.toLowerCase(Locale.ROOT);
         List<Item> items = new ArrayList<>();
         if ("/shortcuts".startsWith(lower)) {
@@ -118,6 +138,13 @@ public final class PaletteSuggestionService {
         if ("/wayfinder".startsWith(lower) || lower.startsWith("/wayfinder")) {
             if (lower.startsWith("/wayfinder")) {
                 String query = input.length() > 10 ? input.substring(10).trim() : "";
+                // Real nearby matches first (selecting one jumps straight to that exact spot),
+                // then registry-name completions to keep typing/refine the search text itself.
+                for (WayfinderManager.PreviewMatch match : WayfinderManager.get().previewNearby(mc, query, 5)) {
+                    String value = "/wayfinder at " + match.pos().getX() + "," + match.pos().getY() + "," + match.pos().getZ() + " " + match.name();
+                    String label = match.name() + "  ·  " + RelativeBearing.deltaLabel(match.right(), match.forward(), match.up());
+                    items.add(new Item(value, label, Source.PREVIEW));
+                }
                 for (WayfinderManager.Suggestion suggestion : WayfinderManager.get().suggestions(query, 8)) {
                     String value = "/wayfinder " + suggestion.id();
                     items.add(new Item(value, value, Source.VOXELPILOT));
@@ -128,6 +155,36 @@ public final class PaletteSuggestionService {
         }
         if ("/wayfinder next".startsWith(lower)) {
             items.add(new Item("/wayfinder next", "/wayfinder next  ·  next search result", Source.VOXELPILOT));
+        }
+        if ("/clear".startsWith(lower)) {
+            items.add(new Item("/clear", "/clear  ·  clear everything (selection, preview, wayfinder, pins, chat)", Source.VOXELPILOT));
+        }
+        if (lower.startsWith("/clear")) {
+            String partial = lower.length() > 6 ? lower.substring(6).stripLeading() : "";
+            for (String target : CLEAR_TARGETS) {
+                if (target.startsWith(partial)) {
+                    String value = "/clear " + target;
+                    items.add(new Item(value, value + "  ·  clear " + target, Source.VOXELPILOT));
+                }
+            }
+        }
+        for (var entry : SIMPLE_COMMANDS.entrySet()) {
+            if (entry.getKey().startsWith(lower)) {
+                items.add(new Item(entry.getKey(), entry.getKey() + "  ·  " + entry.getValue(), Source.VOXELPILOT));
+            }
+        }
+        if ("/speed".startsWith(lower)) {
+            items.add(new Item("/speed", "/speed  ·  set build speed", Source.VOXELPILOT));
+        }
+        if (lower.startsWith("/speed")) {
+            String partial = lower.length() > 6 ? lower.substring(6).stripLeading() : "";
+            for (BuildSpeed speed : BuildSpeed.values()) {
+                String name = speed.name().toLowerCase(Locale.ROOT);
+                if (name.startsWith(partial)) {
+                    String value = "/speed " + name;
+                    items.add(new Item(value, value, Source.VOXELPILOT));
+                }
+            }
         }
         return items;
     }
@@ -159,6 +216,9 @@ public final class PaletteSuggestionService {
         else if (value.startsWith(lower)) score += 500_000;
         else if (fuzzyMatches(value, lower)) score += 100_000;
         else score += CommandUsageStore.get().score(item.value());
+        // Real nearby matches beat plain registry-name completions for the same typed text --
+        // finding an actual chest of redstone matters more than offering to type "redstone_ore".
+        if (item.source() == Source.PREVIEW) score += 600_000;
         if (item.source() == Source.VOXELPILOT) score += 10_000;
         if (item.source() == Source.SERVER) score += 1_000;
         return score;

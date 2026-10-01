@@ -4,6 +4,7 @@ import dev.dwoodard.voxelpilot.awareness.AwarenessManager;
 import dev.dwoodard.voxelpilot.awareness.AwarenessManager.AwarenessState;
 import dev.dwoodard.voxelpilot.reference.ReferencePins;
 import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
+import dev.dwoodard.voxelpilot.util.RelativeBearing;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraftforge.client.event.RenderGuiOverlayEvent;
@@ -40,18 +41,17 @@ public final class ContextualHud {
         double relative = state.relativeBearing();
         String arrow = Math.abs(relative) <= 8 ? "◆" : relative < 0 ? "◀" : "▶";
 
-        // Always use delta for consistent fixed positioning
+        // Rotated into the player's own frame (not raw world x/z) so these arrows always
+        // agree with the leading bearing arrow above: both are relative to facing.
         var pos = state.targetPosition();
-        int dx = (int) Math.round(pos.getX() - mc.player.getX());
-        int dy = (int) Math.round(pos.getY() - mc.player.getY());
-        int dz = (int) Math.round(pos.getZ() - mc.player.getZ());
-        String depth = dy == 0 ? "" : (dy > 0 ? " ⬆ " : " ⬇ ") + Math.abs(dy);
-        String detail = "Δ " + String.format("%3d/%3d/%3d", dx, dy, dz) + depth;
+        RelativeBearing.Local local = RelativeBearing.toLocal(mc, pos.getX() - mc.player.getX(), pos.getZ() - mc.player.getZ());
+        int right = (int) Math.round(local.right());
+        int forward = (int) Math.round(local.forward());
+        int up = (int) Math.round(pos.getY() - mc.player.getY());
 
-        // Always reserve space for status icon (no jumping)
-        if (isReached) detail += "  ✔";
-        else if (isTargeting) detail += "  ◉";
-        else detail += "   ";
+        String detail = RelativeBearing.deltaLabel(right, forward, up)
+            // Always reserve space for status icon (no jumping)
+            + (isReached ? "  ✔" : isTargeting ? "  ◉" : "   ");
 
         String line = arrow + " " + state.targetName().toUpperCase() + "  " + detail;
         int width = mc.font.width(line);
@@ -147,36 +147,31 @@ public final class ContextualHud {
                 continue;
             }
 
-            double dx = reference.x() - mc.player.getX();
-            double dz = reference.z() - mc.player.getZ();
-            double yaw = Math.toRadians(mc.player.getYRot());
-            double localX = dx * Math.cos(yaw) + dz * Math.sin(yaw);
-            double localZ = dz * Math.cos(yaw) - dx * Math.sin(yaw);
+            RelativeBearing.Local local = RelativeBearing.toLocal(mc, reference.x() - mc.player.getX(), reference.z() - mc.player.getZ());
+            int right = (int) Math.round(local.right());
+            int forward = (int) Math.round(local.forward());
+            int up = (int) Math.round(reference.y() - mc.player.getY());
 
-            String distance = reference.distance() == null ? "" : " " + Math.round(reference.distance()) + "m";
-            String label = reference.name().toUpperCase() + distance;
+            String label = reference.name().toUpperCase() + " " + RelativeBearing.deltaLabel(right, forward, up);
 
-            // Pick the dominant relative direction. This is intentionally discrete: it is
-            // glanceable, stable, and much quieter than six continuously sliding widgets.
-            if (Math.abs(localX) > Math.abs(localZ)) {
-                if (localX < 0) {
-                    String line = "◀ " + label;
-                    gui.drawString(mc.font, line, 8, leftY, 0xFFB8C0C8, true);
+            // Still pick one edge to draw on (same placement logic as before) based on the
+            // dominant axis -- only the label text changed, from a single arrow+total-distance
+            // to the same per-axis delta vocabulary used everywhere else.
+            if (Math.abs(right) >= Math.abs(forward)) {
+                if (right < 0) {
+                    gui.drawString(mc.font, label, 8, leftY, 0xFFB8C0C8, true);
                     leftY += 12;
                 } else {
-                    String line = label + " ▶";
-                    int width = mc.font.width(line);
-                    gui.drawString(mc.font, line, gui.guiWidth() - width - 8, rightY, 0xFFB8C0C8, true);
+                    int width = mc.font.width(label);
+                    gui.drawString(mc.font, label, gui.guiWidth() - width - 8, rightY, 0xFFB8C0C8, true);
                     rightY += 12;
                 }
-            } else if (localZ < 0) {
-                String line = "▲ " + label;
-                gui.drawString(mc.font, line, topX, 8, 0xFFB8C0C8, true);
-                topX += mc.font.width(line) + 14;
+            } else if (forward > 0) {
+                gui.drawString(mc.font, label, topX, 8, 0xFFB8C0C8, true);
+                topX += mc.font.width(label) + 14;
             } else {
-                String line = "▼ " + label;
-                gui.drawString(mc.font, line, bottomX, bottom, 0xFFB8C0C8, true);
-                bottomX += mc.font.width(line) + 14;
+                gui.drawString(mc.font, label, bottomX, bottom, 0xFFB8C0C8, true);
+                bottomX += mc.font.width(label) + 14;
             }
         }
     }

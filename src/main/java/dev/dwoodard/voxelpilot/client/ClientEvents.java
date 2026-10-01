@@ -7,6 +7,7 @@ import dev.dwoodard.voxelpilot.bridge.VoxelPilotMcpServer;
 import dev.dwoodard.voxelpilot.build.BuildExecutor;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
 import dev.dwoodard.voxelpilot.build.PreviewMover;
+import dev.dwoodard.voxelpilot.ai.CommandProcessor;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import dev.dwoodard.voxelpilot.ui.CommandPaletteScreen;
 import dev.dwoodard.voxelpilot.ui.SettingsScreen;
@@ -109,6 +110,16 @@ public final class ClientEvents {
 
         if (mc.screen != null) return;
 
+        if (event.getAction() == GLFW.GLFW_PRESS && command && key == GLFW.GLFW_KEY_L) {
+            // Same full clear as Cmd+Shift+J / /clear all, now also reachable without opening
+            // the palette first. CommandPaletteScreen has its own Cmd+L handling for while it's
+            // open, so this only needs gameplay.
+            CommandProcessor.run(mc, "/clear all", message -> {
+                if (mc.player != null) mc.player.displayClientMessage(Component.literal("[VoxelPilot] " + message), true);
+            });
+            return;
+        }
+
         // Cmd = "the preview" (plain arrows = the selection): slide it, raise/lower it, turn it.
         if (command && GhostPreviewManager.get().hasPreview()) {
             String moved = null;
@@ -131,8 +142,15 @@ public final class ClientEvents {
         }
 
         if (event.getAction() == GLFW.GLFW_PRESS && key == GLFW.GLFW_KEY_J) {
-            if (shift) SelectionManager.get().clear(mc);
-            else SelectionManager.get().selectCrosshair(mc);
+            if (command && shift) {
+                CommandProcessor.run(mc, "/clear all", message -> {
+                    if (mc.player != null) mc.player.displayClientMessage(Component.literal("[VoxelPilot] " + message), true);
+                });
+            } else if (shift) {
+                SelectionManager.get().clear(mc);
+            } else {
+                SelectionManager.get().selectCrosshair(mc);
+            }
             return;
         }
 
