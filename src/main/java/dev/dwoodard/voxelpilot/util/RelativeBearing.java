@@ -15,9 +15,11 @@ public final class RelativeBearing {
     // their right, forward > 0 is ahead of them.
     public static Local toLocal(Minecraft mc, double dx, double dz) {
         double yaw = Math.toRadians(mc.player.getYRot());
-        double right = dx * Math.cos(yaw) + dz * Math.sin(yaw);
-        double localZ = dz * Math.cos(yaw) - dx * Math.sin(yaw);
-        return new Local(right, -localZ);
+        // Minecraft yaw 0 faces +z and its right-hand side is -x, so facing = (-sin, cos)
+        // and right = (-cos, -sin).
+        double forward = dz * Math.cos(yaw) - dx * Math.sin(yaw);
+        double right = -(dx * Math.cos(yaw) + dz * Math.sin(yaw));
+        return new Local(right, forward);
     }
 
     // "▶3 ▲12 ⬆2": one glyph+magnitude per non-zero axis, omitting axes that are already zero.
