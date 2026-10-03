@@ -4,12 +4,18 @@ import dev.dwoodard.voxelpilot.bridge.BridgeServer;
 import dev.dwoodard.voxelpilot.build.BuildExecutor;
 import dev.dwoodard.voxelpilot.build.BuildSpeed;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
-import dev.dwoodard.voxelpilot.build.MoveService;
 import dev.dwoodard.voxelpilot.build.PreviewMover;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
+import dev.dwoodard.voxelpilot.reference.ReferenceResolver;
+import dev.dwoodard.voxelpilot.reference.ReferenceStore;
+import dev.dwoodard.voxelpilot.reference.ReferencePins;
+import dev.dwoodard.voxelpilot.query.DeterministicQueryService;
 import dev.dwoodard.voxelpilot.selection.StructureSelector;
 import dev.dwoodard.voxelpilot.ui.SettingsScreen;
+import dev.dwoodard.voxelpilot.ui.ShortcutRegistry;
+import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 
 import java.util.ArrayList;
@@ -25,27 +31,171 @@ public final class CommandProcessor {
         String lower = input.toLowerCase(Locale.ROOT);
         if (input.isBlank()) return;
 
-        if (lower.equals("clear chat")) {
+        // These wipe the chat log themselves, so they run before addUser()/reply() below and
+        // report through status.accept() directly -- otherwise the command we're about to
+        // clear would end up re-adding a line to the history it just emptied.
+        if (lower.equals("/clear chat")) {
             PaletteHistory.get().clear();
             RecentHistory.get().clear();
-            status.accept("Type what you want VoxelPilot to do");
+            status.accept("Chat cleared");
             return;
         }
-        // Full reset: ghost, chat, and everything the AI remembers. The selection stays.
-        if (lower.equals("cls") || lower.equals("reset") || lower.equals("clear all") || lower.equals("start over")) {
+        if (lower.equals("/clear") || lower.equals("/clear all")) {
+            if (BuildExecutor.get().active()) BuildExecutor.get().cancel();
             GhostPreviewManager.get().clear();
+            WayfinderManager.get().clear();
+            ReferencePins.get().clear();
+            SelectionManager.get().clear(mc);
             PaletteHistory.get().clear();
             RecentHistory.get().clear();
-            status.accept("Reset · preview, chat, and AI history cleared");
+            status.accept("Cleared · selection, preview, wayfinder, pins, chat, and AI history reset");
             return;
         }
 
         PaletteHistory.get().addUser(input);
         Consumer<String> reply = value -> { PaletteHistory.get().addAssistant(value); status.accept(value); };
 
+        if (lower.equals("/shortcuts") || lower.equals("/keys")) {
+            reply.accept(ShortcutRegistry.displayText());
+            return;
+        }
+
+        if (input.startsWith("?")) {
+            reply.accept(DeterministicQueryService.query(mc, input.substring(1)));
+            return;
+        }
+
+        if (lower.startsWith("/pin ")) {
+            String token = input.substring(input.indexOf(' ') + 1).trim();
+            ReferenceResolver.resolve(mc, token.startsWith("@") ? token.substring(1) : token)
+                .ifPresentOrElse(
+                    reference -> {
+                        ReferencePins.get().pin(reference.token());
+                        reply.accept("Pinned " + reference.token() + " to HUD");
+                    },
+                    () -> reply.accept("Unknown reference: " + token)
+                );
+            return;
+        }
+
+        if (lower.startsWith("/unpin ")) {
+            String token = input.substring(input.indexOf(' ') + 1).trim();
+            reply.accept(ReferencePins.get().unpin(token)
+                ? "Unpinned " + (token.startsWith("@") ? token : "@" + token)
+                : "Reference was not pinned");
+            return;
+        }
+
+        if (lower.equals("/clear selection")) {
+            SelectionManager.get().clear(mc);
+            reply.accept("Selection cleared");
+            return;
+        }
+        if (lower.equals("/clear preview")) {
+            if (BuildExecutor.get().active()) BuildExecutor.get().cancel();
+            GhostPreviewManager.get().clear();
+            RecentHistory.get().mark("cancelled");
+            reply.accept("Preview cleared");
+            return;
+        }
+        if (lower.equals("/clear wayfinder")) {
+            WayfinderManager.get().clear();
+            reply.accept("Wayfinder cleared");
+            return;
+        }
+        if (lower.equals("/clear pins")) {
+            ReferencePins.get().clear();
+            reply.accept("Pins cleared");
+            return;
+        }
+
+        if (input.startsWith("#") && !input.contains(" ")) {
+            ReferenceStore.get().designate(mc, input.substring(1))
+                .ifPresentOrElse(
+                    place -> reply.accept("Designated @" + place.name() + " · " + place.position().getX() + ", "
+                        + place.position().getY() + ", " + place.position().getZ()),
+                    () -> reply.accept("Could not create designation")
+                );
+            return;
+        }
+
+        if (input.startsWith("@") && !input.contains(" ")) {
+            ReferenceResolver.resolve(mc, input.substring(1))
+                .ifPresentOrElse(
+                    reference -> reply.accept(reference.promptContext().replace("\n", " · ")),
+                    () -> reply.accept(input + " is unknown")
+                );
+            return;
+        }
+
+        if (lower.equals("/wayfinder next")) {
+            var target = WayfinderManager.get().findNext(mc);
+            if (target.isEmpty()) {
+                reply.accept(WayfinderManager.get().canFindNext()
+                    ? WayfinderManager.get().searchFailure("additional " + WayfinderManager.get().active().map(WayfinderManager.Target::query).orElse("match"))
+                    : "Find Next requires an active Wayfinder search");
+            } else {
+                reply.accept(WayfinderManager.get().describe(target.get(), mc.player.blockPosition()));
+                mc.setScreen(null);
+                if (mc.player != null) mc.player.displayClientMessage(
+                    Component.literal("[VoxelPilot] Wayfinding to next " + target.get().name()), true);
+            }
+            return;
+        }
+
+        // Jumps to an exact position a Cmd-K preview suggestion already resolved, rather than
+        // re-running a text search that could land on a different match than the one selected.
+        if (lower.startsWith("/wayfinder at ")) {
+            String rest = input.substring(14).trim();
+            int coordsEnd = rest.indexOf(' ');
+            String coordsPart = coordsEnd < 0 ? rest : rest.substring(0, coordsEnd);
+            String name = coordsEnd < 0 ? "" : rest.substring(coordsEnd + 1).trim();
+            String[] coords = coordsPart.split(",");
+            if (coords.length != 3) { reply.accept("Usage: /wayfinder at X,Y,Z name"); return; }
+            try {
+                BlockPos pos = new BlockPos(Integer.parseInt(coords[0]), Integer.parseInt(coords[1]), Integer.parseInt(coords[2]));
+                var target = WayfinderManager.get().goTo(mc, name.isBlank() ? "target" : name, pos);
+                if (target.isEmpty()) {
+                    reply.accept("Could not set that as a Wayfinder target");
+                } else {
+                    reply.accept(WayfinderManager.get().describe(target.get(), mc.player.blockPosition()));
+                    mc.setScreen(null);
+                    if (mc.player != null) mc.player.displayClientMessage(
+                        Component.literal("[VoxelPilot] Wayfinding to " + target.get().name()), true);
+                }
+            } catch (NumberFormatException e) {
+                reply.accept("Usage: /wayfinder at X,Y,Z name");
+            }
+            return;
+        }
+
+        if (lower.equals("/wayfinder") || lower.equals("/wayfinder cancel") || lower.equals("/wayfinder clear")) {
+            WayfinderManager.get().clear();
+            reply.accept(lower.equals("/wayfinder") ? "Usage: /wayfinder [block]" : "Wayfinder cleared");
+            return;
+        }
+        if (lower.startsWith("/wayfinder ")) {
+            String query = input.substring(input.indexOf(' ') + 1).trim();
+            var target = query.startsWith("@")
+                ? WayfinderManager.get().followReference(mc, query)
+                : WayfinderManager.get().findNearest(mc, query);
+            if (target.isEmpty()) {
+                reply.accept(query.startsWith("@")
+                    ? query + " has no known position in the current dimension"
+                    : WayfinderManager.get().searchFailure(query));
+            } else {
+                reply.accept(WayfinderManager.get().describe(target.get(), mc.player.blockPosition()));
+                mc.setScreen(null);
+                if (mc.player != null) mc.player.displayClientMessage(
+                    Component.literal("[VoxelPilot] Wayfinding to " + target.get().name()), true);
+            }
+            return;
+        }
+
         switch (lower) {
-            // Short aliases so quick answers never reach the model.
-            case "confirm", "confirm preview", "c", "y", "yes", "ok", "go", "build it", "do it" -> {
+            // World mutation requires explicit preview confirmation. Conversational text such as
+            // "yes", "go", or "do it" belongs to AI rather than acting as authorization.
+            case "/confirm" -> {
                 BuildExecutor.get().confirm(mc).whenComplete((result, error) -> mc.execute(() -> {
                     if (error == null && result.ok()) RecentHistory.get().mark("confirmed");
                     else RecentHistory.get().mark("confirm failed: " + (error != null ? rootMessage(error) : result.message()));
@@ -53,23 +203,15 @@ public final class CommandProcessor {
                 }));
                 return;
             }
-            case "cancel", "cancel preview", "x", "n", "no", "stop", "clear preview", "clear ghost", "remove preview", "clear the preview" -> {
-                if (BuildExecutor.get().active()) BuildExecutor.get().cancel();
-                GhostPreviewManager.get().clear();
-                RecentHistory.get().mark("cancelled");
-                reply.accept("Cancelled");
-                return;
-            }
-            case "pause" -> { BuildExecutor.get().pause(); reply.accept("Build paused"); return; }
-            case "resume", "continue" -> { BuildExecutor.get().resume(); reply.accept("Build resumed"); return; }
-            case "undo", "u" -> {
+            case "/pause" -> { BuildExecutor.get().pause(); reply.accept("Build paused"); return; }
+            case "/resume" -> { BuildExecutor.get().resume(); reply.accept("Build resumed"); return; }
+            case "/undo" -> {
                 var result = BuildExecutor.get().undo(mc);
                 if (result.ok()) RecentHistory.get().mark("undone");
                 reply.accept(result.message());
                 return;
             }
-            case "clear selection" -> { SelectionManager.get().clear(mc); reply.accept("Selection cleared"); return; }
-            case "settings", "models", "configure" -> { mc.setScreen(new SettingsScreen()); return; }
+            case "/settings" -> { mc.setScreen(new SettingsScreen()); return; }
         }
 
         // Pointing is unambiguous, so it needs no model: grow from the crosshair.
@@ -116,32 +258,53 @@ public final class CommandProcessor {
             }
         }
 
-        if (lower.startsWith("speed ")) {
-            BuildSpeed speed = BuildSpeed.parse(lower.substring(6));
+        if (lower.startsWith("/speed ")) {
+            BuildSpeed speed = BuildSpeed.parse(lower.substring(7));
             BuildExecutor.get().setSpeed(speed);
             reply.accept("Build speed: " + speed.name().toLowerCase());
+            return;
+        }
+
+        // Natural language search queries should use Wayfinder, not the AI model.
+        // The AI model wastes tokens thinking about building when asked "find closest X".
+        var search = java.util.regex.Pattern.compile("(?:find|locate|search for|where is) (?:the |closest |nearest )?(\\S+)").matcher(lower);
+        if (search.matches()) {
+            String query = search.group(1);
+            var target = WayfinderManager.get().findNearest(mc, query);
+            if (target.isEmpty()) {
+                reply.accept(WayfinderManager.get().searchFailure(query));
+            } else {
+                reply.accept(WayfinderManager.get().describe(target.get(), mc.player.blockPosition()));
+                mc.setScreen(null);
+                if (mc.player != null) mc.player.displayClientMessage(
+                    Component.literal("[VoxelPilot] Wayfinding to " + target.get().name()), true);
+            }
             return;
         }
 
         BridgeServer.get().ensureRunning();
         status.accept("Planning…");
         RecentHistory.Entry history = RecentHistory.get().start(input);
-        AiPlanner.plan(mc, input).whenComplete((outcome, error) -> mc.execute(() -> {
+        AiService.run(mc, input).whenComplete((result, error) -> mc.execute(() -> {
             if (error != null) {
                 history.fail("error: " + rootMessage(error));
                 reply.accept("AI error: " + rootMessage(error));
                 return;
             }
-            BuildPlan plan = outcome.plan();
+            if (result instanceof AiResult.Answer answer) {
+                history.finish(List.of(), "replied: " + answer.message());
+                reply.accept(answer.message());
+                return;
+            }
+            AiResult.Build build = (AiResult.Build) result;
+            BuildPlan plan = build.plan();
+            AiPlanner.Outcome outcome = new AiPlanner.Outcome(plan, build.resolved(), build.frame(), build.skipped());
             history.finish(plan.script, describe(outcome));
             if (outcome.resolved() == null) {
-                // Nothing to preview - either a move request, or the model correctly
-                // recognized this wasn't a build request and replied conversationally.
-                if (plan.suggestedMove != null && lower.startsWith("move me")) {
-                    var target = outcome.frame().toWorld((int) Math.floor(plan.suggestedMove.x),
-                        (int) Math.floor(plan.suggestedMove.y), (int) Math.floor(plan.suggestedMove.z));
-                    var move = MoveService.move(mc, target.getX() + 0.5, target.getY(), target.getZ() + 0.5);
-                    reply.accept(move.message());
+                // AI may suggest movement, but suggestions never directly mutate player state.
+                // Movement needs its own explicit deterministic/authorized capability.
+                if (plan.suggestedMove != null) {
+                    reply.accept("Movement suggested but not executed");
                 } else {
                     reply.accept(plan.message == null || plan.message.isBlank() ? "No changes needed" : plan.message);
                 }
@@ -161,7 +324,7 @@ public final class CommandProcessor {
             String notes = allNotes.isEmpty() ? "" : " · " + String.join(" · ", allNotes);
             reply.accept((plan.message == null || plan.message.isBlank() ? plan.title : plan.message)
                 + " · rev " + GhostPreviewManager.get().revision() + " · " + resolved.changes().size() + " changes" + notes);
-            if (mc.player != null) mc.player.displayClientMessage(Component.literal("[VoxelPilot] Ghost preview ready · Cmd+Shift+K for details"), true);
+            if (mc.player != null) mc.player.displayClientMessage(Component.literal("[VoxelPilot] Ghost preview ready · Cmd+K for actions"), true);
         }));
     }
 

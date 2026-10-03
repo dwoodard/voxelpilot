@@ -23,7 +23,7 @@ Build a client-installed Forge 1.20.1 mod that adds an AI layer to local single-
 - `undo` restores the immediately previous AI world operation.
 - Build execution is visible over time; AI chooses a default speed and the user can override `slow`, `normal`, `fast`, or `instant`.
 - Player movement is separate from world editing and only happens when explicitly requested or accepted.
-- Remote multiplayer world editing is disabled. VoxelPilot is a client-installed mod and only mutates the integrated server of a local single-player world.
+- VoxelPilot is a client-installed mod and works on any server. On remote servers it changes the world only through normal player actions (place and break packets within reach, at a server-safe rate); it never runs server commands and never mutates a server directly. Server rules, permissions and anti-cheat still apply, and failed placements pause the build.
 
 ## Architecture
 
@@ -116,6 +116,6 @@ The user does not need to choose these modes. They are shown in the Workspace so
 1. AI output is never executed without local validation.
 2. AI build plans never execute before user confirmation.
 3. `confirm` executes the already-previewed plan, not a newly generated one.
-4. Remote multiplayer servers are never mutated by VoxelPilot-specific world editing.
+4. On remote servers VoxelPilot only acts as a player would (no commands, no server-side mutation); the server stays authoritative.
 5. Survival placement cannot create resources.
 6. Undo data is captured before the first block of an operation is changed.

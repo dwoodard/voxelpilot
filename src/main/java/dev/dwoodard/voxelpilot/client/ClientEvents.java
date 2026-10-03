@@ -3,36 +3,58 @@ package dev.dwoodard.voxelpilot.client;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.dwoodard.voxelpilot.bridge.BridgeServer;
+import dev.dwoodard.voxelpilot.bridge.VoxelPilotMcpServer;
 import dev.dwoodard.voxelpilot.build.BuildExecutor;
 import dev.dwoodard.voxelpilot.build.GhostPreviewManager;
 import dev.dwoodard.voxelpilot.build.PreviewMover;
+import dev.dwoodard.voxelpilot.ai.CommandProcessor;
 import dev.dwoodard.voxelpilot.selection.SelectionManager;
 import dev.dwoodard.voxelpilot.ui.CommandPaletteScreen;
-import dev.dwoodard.voxelpilot.ui.InspectorScreen;
 import dev.dwoodard.voxelpilot.ui.SettingsScreen;
+import dev.dwoodard.voxelpilot.wayfinder.PathRenderer;
+import dev.dwoodard.voxelpilot.wayfinder.WayfinderManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraftforge.api.distmarker.OnlyIn;
+import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
 import net.minecraftforge.client.event.InputEvent;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
+import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import org.lwjgl.glfw.GLFW;
 
 public final class ClientEvents {
-    // Whether the Inspector should be showing. Cmd+Shift+K flips this. Opening the
-    // palette (Cmd+K) or Settings (Cmd+,) temporarily occupies the one Minecraft Screen
-    // slot on top of it; their onClose() hands control back to the Inspector if this is true.
-    public static boolean inspectorOpen;
+    private static final int PATH_UPDATE_INTERVAL = 40;
+    private int tickCounter = 0;
 
     // Agents (MCP, scripts) can connect as soon as a world is open, not only after Cmd+K.
     @SubscribeEvent
     public void onLogin(ClientPlayerNetworkEvent.LoggingIn event) {
         BridgeServer.get().ensureRunning();
+        VoxelPilotMcpServer.get().ensureRunning();
+    }
+
+    @SubscribeEvent
+    public void onClientTick(TickEvent.ClientTickEvent event) {
+        if (event.phase != TickEvent.Phase.END) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || mc.player == null) return;
+
+        tickCounter++;
+        if (tickCounter >= PATH_UPDATE_INTERVAL) {
+            tickCounter = 0;
+            var target = WayfinderManager.get().active();
+            if (target.isPresent()) {
+                WayfinderManager.get().recomputePath(mc, target.get());
+            }
+        }
     }
 
     @SubscribeEvent
@@ -46,16 +68,23 @@ public final class ClientEvents {
         boolean command = (mods & GLFW.GLFW_MOD_SUPER) != 0 || (mods & GLFW.GLFW_MOD_CONTROL) != 0;
 
         if (event.getAction() == GLFW.GLFW_PRESS && command && key == GLFW.GLFW_KEY_K) {
-            if (shift) {
-                inspectorOpen = !inspectorOpen;
-                if (!(mc.screen instanceof CommandPaletteScreen) && !(mc.screen instanceof SettingsScreen)) {
-                    mc.setScreen(inspectorOpen ? new InspectorScreen() : null);
-                }
-            } else if (mc.screen instanceof CommandPaletteScreen palette) {
+            if (mc.screen instanceof CommandPaletteScreen palette) {
                 palette.onClose();
             } else {
                 BridgeServer.get().ensureRunning();
                 mc.setScreen(new CommandPaletteScreen());
+            }
+            return;
+        }
+
+        if (event.getAction() == GLFW.GLFW_PRESS && command && key == GLFW.GLFW_KEY_SLASH) {
+            BridgeServer.get().ensureRunning();
+            if (mc.screen instanceof CommandPaletteScreen palette) {
+                palette.showShortcuts();
+            } else {
+                CommandPaletteScreen palette = new CommandPaletteScreen();
+                mc.setScreen(palette);
+                palette.showShortcuts();
             }
             return;
         }
@@ -81,6 +110,16 @@ public final class ClientEvents {
 
         if (mc.screen != null) return;
 
+        if (event.getAction() == GLFW.GLFW_PRESS && command && key == GLFW.GLFW_KEY_L) {
+            // Same full clear as Cmd+Shift+J / /clear all, now also reachable without opening
+            // the palette first. CommandPaletteScreen has its own Cmd+L handling for while it's
+            // open, so this only needs gameplay.
+            CommandProcessor.run(mc, "/clear all", message -> {
+                if (mc.player != null) mc.player.displayClientMessage(Component.literal("[VoxelPilot] " + message), true);
+            });
+            return;
+        }
+
         // Cmd = "the preview" (plain arrows = the selection): slide it, raise/lower it, turn it.
         if (command && GhostPreviewManager.get().hasPreview()) {
             String moved = null;
@@ -103,8 +142,15 @@ public final class ClientEvents {
         }
 
         if (event.getAction() == GLFW.GLFW_PRESS && key == GLFW.GLFW_KEY_J) {
-            if (shift) SelectionManager.get().clear(mc);
-            else SelectionManager.get().selectCrosshair(mc);
+            if (command && shift) {
+                CommandProcessor.run(mc, "/clear all", message -> {
+                    if (mc.player != null) mc.player.displayClientMessage(Component.literal("[VoxelPilot] " + message), true);
+                });
+            } else if (shift) {
+                SelectionManager.get().clear(mc);
+            } else {
+                SelectionManager.get().selectCrosshair(mc);
+            }
             return;
         }
 
@@ -157,6 +203,27 @@ public final class ClientEvents {
         SelectionManager.get().box().ifPresent(box ->
             LevelRenderer.renderLineBox(pose, lines, box.aabb(), 0.95F, 0.75F, 0.15F, 1.0F));
 
+        WayfinderManager.get().active().ifPresent(target -> {
+            // Long-distance navigation belongs to the HUD. X-ray world markers are
+            // precision aids only, otherwise they become permanent visual clutter.
+            if (mc.player != null && mc.player.blockPosition().distSqr(target.pos()) <= 32 * 32) {
+                int dy = target.pos().getY() - mc.player.blockPosition().getY();
+                boolean isUnderground = dy < -5;
+                float r = isUnderground ? 0.35F : 0.25F;
+                float g = isUnderground ? 0.50F : 1.0F;
+                float b = isUnderground ? 0.75F : 0.35F;
+                LevelRenderer.renderLineBox(pose, lines, new AABB(target.pos()).inflate(0.04),
+                    r, g, b, 1.0F);
+            }
+        });
+
+        for (BlockPos waypoint : WayfinderManager.get().waypoints()) {
+            if (mc.player != null && mc.player.blockPosition().distSqr(waypoint) <= 32 * 32) {
+                LevelRenderer.renderLineBox(pose, lines, new AABB(waypoint).inflate(0.08),
+                    1.0F, 0.8F, 0.2F, 0.8F);
+            }
+        }
+
         var changes = GhostPreviewManager.get().changes();
         int stride = changes.size() > 5000 ? Math.max(1, changes.size() / 5000) : 1;
         for (int i = 0; i < changes.size(); i += stride) {
@@ -169,5 +236,7 @@ public final class ClientEvents {
 
         buffers.endBatch(XrayRenderType.LINES);
         pose.popPose();
+
+        PathRenderer.render(pose, buffers, mc);
     }
 }

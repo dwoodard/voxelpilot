@@ -69,9 +69,24 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
             JsonObject object = new JsonObject();
             object.addProperty("role", m.role());
             object.addProperty("content", m.content());
+            m.toolCalls().ifPresent(calls -> object.add("tool_calls", calls));
+            m.toolCallId().ifPresent(id -> object.addProperty("tool_call_id", id));
             messagesJson.add(object);
         }
         body.add("messages", messagesJson);
+
+        JsonArray tools = new JsonArray();
+        for (ToolDefinition tool : ToolDefinition.all()) {
+            JsonObject toolDef = new JsonObject();
+            toolDef.addProperty("type", "function");
+            JsonObject function = new JsonObject();
+            function.addProperty("name", tool.name());
+            function.addProperty("description", tool.description());
+            function.add("parameters", tool.parameters());
+            toolDef.add("function", function);
+            tools.add(toolDef);
+        }
+        body.add("tools", tools);
 
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri("/chat/completions"))
             .header("Content-Type", "application/json")
@@ -89,6 +104,7 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
             LineSplitter splitter = new LineSplitter(onLine);
             boolean sawReasoning = false;
             String finish = null;
+            JsonArray toolCalls = new JsonArray();
             long started = System.currentTimeMillis();
             try (Stream<String> lines = response.body()) {
                 for (String line : (Iterable<String>) lines::iterator) {
@@ -102,10 +118,32 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
                     if (delta != null) {
                         splitter.accept(text(delta, "content"));
                         sawReasoning |= !text(delta, "reasoning_content").isEmpty() || !text(delta, "reasoning").isEmpty();
+                        JsonArray calls = delta.getAsJsonArray("tool_calls");
+                        if (calls != null && calls.size() > 0) {
+                            for (JsonElement callElement : calls) {
+                                JsonObject call = callElement.getAsJsonObject();
+                                // Each chunk names its slot with "index"; arguments arrive as
+                                // partial strings across many chunks and must be concatenated,
+                                // not overwritten, or the accumulated JSON ends up truncated.
+                                int index = call.has("index") ? call.get("index").getAsInt() : 0;
+                                while (toolCalls.size() <= index) toolCalls.add(new JsonObject());
+                                JsonObject existing = toolCalls.get(index).getAsJsonObject();
+                                if (call.has("id")) existing.addProperty("id", call.get("id").getAsString());
+                                if (call.has("type")) existing.addProperty("type", call.get("type").getAsString());
+                                if (call.has("function")) {
+                                    JsonObject func = call.getAsJsonObject("function");
+                                    JsonObject existingFunc = existing.has("function")
+                                        ? existing.getAsJsonObject("function") : new JsonObject();
+                                    if (func.has("name")) existingFunc.addProperty("name", func.get("name").getAsString());
+                                    if (func.has("arguments")) {
+                                        String prev = existingFunc.has("arguments") ? existingFunc.get("arguments").getAsString() : "";
+                                        existingFunc.addProperty("arguments", prev + func.get("arguments").getAsString());
+                                    }
+                                    existing.add("function", existingFunc);
+                                }
+                            }
+                        }
                     }
-                    // Some local reasoning models (e.g. Qwen 3.5 in LM Studio) can't be told to
-                    // skip thinking and will burn the whole budget on it. Give up early and say why;
-                    // closing the stream also stops the generation server-side.
                     if (sawReasoning && splitter.text().isBlank() && System.currentTimeMillis() - started > THINKING_LIMIT_MS) {
                         throw new IllegalStateException("Model spent " + THINKING_LIMIT_MS / 1000
                             + "s thinking without answering. Pick a faster model in Settings (Cmd+,), e.g. openai/gpt-oss-20b");
@@ -116,6 +154,13 @@ public final class OpenAiCompatibleProvider implements ModelProvider {
             }
             splitter.flush();
             if ("length".equals(finish)) throw PlanJson.truncated();
+
+            if ("tool_calls".equals(finish) && toolCalls.size() > 0) {
+                JsonObject result = new JsonObject();
+                result.add("tool_calls", toolCalls);
+                return GSON.toJson(result);
+            }
+
             if (splitter.text().isBlank()) {
                 throw new IllegalStateException(sawReasoning
                     ? "Model only produced reasoning and no answer; try a non-thinking model"

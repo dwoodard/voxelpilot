@@ -105,7 +105,7 @@ public final class SettingsScreen extends Screen {
     @Override
     public void onClose() {
         Minecraft mc = Minecraft.getInstance();
-        mc.setScreen(dev.dwoodard.voxelpilot.client.ClientEvents.inspectorOpen ? new InspectorScreen() : null);
+        mc.setScreen(null);
     }
 
     private static String rootMessage(Throwable error) {
