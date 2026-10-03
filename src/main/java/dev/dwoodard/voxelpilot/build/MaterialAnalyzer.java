@@ -1,6 +1,7 @@
 package dev.dwoodard.voxelpilot.build;
 
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -37,7 +38,7 @@ public final class MaterialAnalyzer {
         return out;
     }
 
-    public static int countInventory(ServerPlayer player, Item item) {
+    public static int countInventory(Player player, Item item) {
         int count = 0;
         for (ItemStack stack : player.getInventory().items) if (!stack.isEmpty() && stack.is(item)) count += stack.getCount();
         return count;

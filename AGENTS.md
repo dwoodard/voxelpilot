@@ -5,7 +5,7 @@ Read `PLAN.md` before changing behavior.
 ## Invariants
 
 - Minecraft target is 1.20.1 Forge 47.4.x and Java 17.
-- This is installed as a client mod. VoxelPilot-specific mutations are only permitted against the local integrated single-player server.
+- This is installed as a client mod and works on any server. Against a remote server it may only act through normal player actions (place/break packets within reach); never server commands or direct server-side mutation.
 - Do not add `/ai`; Cmd+K is the primary prompt interface.
 - Do not execute a newly generated plan on `confirm`. Confirm must apply the exact current preview.
 - Never let model output bypass local validation.
